@@ -1,0 +1,14 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+
+# TS 增量构建缓存
+tsconfig.tsbuildinfo
+
+# 本地临时文件
+scripts/parse_rvd.mjs.bak
+*.log
+.DS_Store
