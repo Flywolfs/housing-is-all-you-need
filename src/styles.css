@@ -330,6 +330,17 @@ body {
   color: #dc2626;
 }
 
+.afford-warning {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-left: 5px solid #dc2626;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .warnings {
   margin: 0;
   padding: 10px 12px 10px 28px;

@@ -5,9 +5,17 @@ import { fmtMoney, fmtSignedWan, fmtWan } from '../utils/format.ts'
 export function Summary({ result, inputs }: { result: { derived: Derived; warnings: string[] }; inputs: Inputs }) {
   const { derived: d, warnings } = result
   const buyWins = d.finalDiff > 0
+  const shortfall = d.upfrontBuy - inputs.initialCash
 
   return (
     <div className="summary">
+      {shortfall > 0 && (
+        <div className="afford-warning">
+          <b>资金不足，该方案当前无法完成交易：</b>
+          期初总支出 {fmtMoney(d.upfrontBuy)} 超过手头现金 {fmtMoney(inputs.initialCash)}，缺口{' '}
+          {fmtMoney(shortfall)}。可降低首付比例（增加贷款）、调低楼价或减少装修等期初支出。
+        </div>
+      )}
       <div className={`verdict ${buyWins ? 'verdict-buy' : 'verdict-rent'}`}>
         <span className="verdict-tag">{buyWins ? '买房更优' : '租房更优'}</span>
         <span className="verdict-text">
@@ -44,7 +52,11 @@ export function Summary({ result, inputs }: { result: { derived: Derived; warnin
         </div>
         <div className="metric">
           <span className="metric-label">期初总支出</span>
-          <span className="metric-value">{fmtMoney(d.upfrontBuy)}</span>
+          <span className={`metric-value ${shortfall > 0 ? 'bad' : ''}`}>{fmtMoney(d.upfrontBuy)}</span>
+        </div>
+        <div className="metric">
+          <span className="metric-label">手头现金（第 0 年）</span>
+          <span className={`metric-value ${shortfall > 0 ? 'bad' : ''}`}>{fmtMoney(inputs.initialCash)}</span>
         </div>
       </div>
 

@@ -34,7 +34,16 @@ export default function App() {
   }, [inputs])
 
   const set = <K extends keyof Inputs>(key: K, value: Inputs[K]) => {
-    setInputs((prev) => ({ ...prev, [key]: value }))
+    setInputs((prev) => {
+      const next = { ...prev, [key]: value }
+      // 联动钳制：模拟时长缩短时，出售/换房年份不能超出时长
+      if (key === 'years') {
+        const t = next.years
+        if (next.sellYear !== null && next.sellYear > t) next.sellYear = t
+        if (next.switchYear > t) next.switchYear = t
+      }
+      return next
+    })
   }
 
   const result = useMemo(() => simulate(inputs), [inputs])
@@ -48,7 +57,7 @@ export default function App() {
         </p>
       </header>
       <main className="layout">
-        <InputPanel inputs={inputs} set={set} />
+        <InputPanel inputs={inputs} set={set} derived={result.derived} />
         <section className="results">
           <Summary result={result} inputs={inputs} />
           <div className="card">

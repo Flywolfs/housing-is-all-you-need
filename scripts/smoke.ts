@@ -71,11 +71,10 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
   for (const row of rA.rows) {
     expectClose(`不变量A@第${row.year}年`, row.buyNetWorth - row.rentNetWorth, 0, 2)
   }
-  const rB = simulate({ ...inp, rent1Monthly: 1_000 })
+  const rB = simulate({ ...inp, rent1Monthly: 1_000, prepaidMonths: 1 })
   for (const row of rB.rows) {
-    // 零利率下：diff = 租客累计总支出（期初一次性 + 已付租金），与楼价和现金无关
-    const upfrontRent = inp.prepaidMonths * 1_000 + inp.tenantAgentFeeMonths * 0 + inp.movingCostPerMove
-    expectClose(`不变量B@第${row.year}年`, row.buyNetWorth - row.rentNetWorth, upfrontRent + 1_000 * 12 * row.year, 2)
+    // 上期 1,000 = 首月租金预付（月循环跳过首月），累计流出 = 12y×1,000，上期不再额外计费（2.4 修复）
+    expectClose(`不变量B@第${row.year}年`, row.buyNetWorth - row.rentNetWorth, 1_000 * 12 * row.year, 2)
   }
 }
 
@@ -131,6 +130,66 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
   })
   expectClose('高成数回赠基数=七成楼价', r.derived.rebateAmount, 72_800, 1)
   expectClose('高成数回赠 贷款额', r.derived.loanAmount, 7_127_200, 1)
+}
+
+// 7. 按金不变量（2.1 修复验证）：零利率下按金月数不影响每年租房净资产
+//    （按金=现金转资产、退回转回现金；换楼重置净额入现金池，净资产不跳变）
+{
+  const z = { ...DEFAULT_INPUTS, depositRatePct: 0, investmentReturnPct: 0 }
+  const d2 = simulate(z)
+  const d0 = simulate({ ...z, depositMonths: 0 })
+  d2.rows.forEach((row, i) => {
+    expectClose(`按金不变量@第${row.year}年`, row.rentNetWorth - d0.rows[i].rentNetWorth, 0, 2)
+  })
+}
+
+// 8. 上期口径（2.4 修复验证）：总租金支出 = 12T × 月租（无重复计费）
+{
+  const r = simulate(DEFAULT_INPUTS)
+  const total = r.rows.reduce((a, row) => a + row.rentPaid, 0) + 13_500
+  expectClose('上期口径 总租金=12T×月租', total, 1_890_000, 1)
+}
+
+// 9. sell_year > years：忽略出售并警告，不崩溃
+{
+  const r = simulate({ ...DEFAULT_INPUTS, years: 5, sellYear: 10 })
+  expectClose('sell>T 行数', r.rows.length, 5, 0)
+  expectTrue('sell>T 未卖出', !r.rows[4].buySold)
+  expectTrue('sell>T salePriceDefault=null', r.derived.salePriceDefault === null)
+  expectTrue('sell>T 有警告', r.warnings.some((w) => w.includes('超过模拟时长')))
+}
+
+// 10. 提前还款（D9 覆盖）：罚息 + 回赠按比例追讨；prepay 前余额 = 基线年末余额
+{
+  const base = simulate(DEFAULT_INPUTS)
+  const pre = simulate({ ...DEFAULT_INPUTS, annualPrepayment: 500_000 })
+  expectTrue('提前还款 amount>0', pre.rows[0].buyPrepaid > 0)
+  const amount = pre.rows[0].buyPrepaid
+  expectClose('提前还款 罚息+按比例追讨', pre.rows[0].buyMiscPaid, amount * 0.01 + 28_000 * (amount / base.rows[0].buyLoan), 1)
+  expectTrue('提前还款 贷款减少', pre.rows[1].buyLoan < base.rows[1].buyLoan)
+}
+
+// 11. 锁定期内卖出（D10 覆盖）：回赠追讨 2/3 + 罚息 1%×余额
+{
+  const base = simulate(DEFAULT_INPUTS)
+  const s2 = simulate({ ...DEFAULT_INPUTS, sellYear: 2 })
+  expectTrue('锁定期卖出 已售', s2.rows[1].buySold)
+  expectClose('锁定期卖出 追讨+罚息', s2.rows[1].buyMiscPaid, (28_000 * 2) / 3 + base.rows[1].buyLoan * 0.01, 1)
+  expectClose('锁定期卖出 贷款清零', s2.rows[1].buyLoan, 0, 0.01)
+  expectTrue('锁定期卖出 有警告', s2.warnings.some((w) => w.includes('罚息锁定期')))
+}
+
+// 12. mip_override 语义 = 实收终值（2.3 修复验证，不随放款缩放）
+{
+  const r = simulate({ ...DEFAULT_INPUTS, downPaymentPct: 10, cashRebatePct: 1.5, mipOverride: 50_000 })
+  expectClose('mip_override 实收终值', r.derived.mipPremium, 50_000, 0.01)
+}
+
+// 13. 非零楼价增长方向性
+{
+  const r = simulate({ ...DEFAULT_INPUTS, priceGrowthRates: Array(30).fill(10) })
+  expectTrue('楼价年涨10% 买房赢', r.derived.finalDiff > 0)
+  expectTrue('楼价年涨10% 打平年≤3', r.derived.breakEvenYear !== null && r.derived.breakEvenYear <= 3)
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 个失败`)

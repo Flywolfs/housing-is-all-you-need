@@ -88,7 +88,7 @@ UI 分组与参数一一对应（`src/components/InputPanel.tsx`）。
 | 一 基本 | `years` (T) | 10 | 模拟时长 1–30 |
 | | `property_price` | 5,000,000 | 第 0 年买入价 |
 | | `price_growth_rates` | 全 0 ×30 | 楼价年增长率列表（%） |
-| | `sell_year` / `sale_price_override` | None / None | 第 S 年末出售 / 手动出售价 |
+| | `sell_year` / `sale_price_override` | None / None | 第 S 年末出售 / 手动出售价；S 超过 T 时引擎忽略并警告，UI 在缩短时长时联动回收 |
 | | `initial_cash` | 2,000,000 | 手头现金 |
 | 二 交易成本 | `down_payment_pct` | 30 | 首付比例（贷款成数 = 100−此值） |
 | | `agency_fee_pct` | 1 | 买楼佣金 |
@@ -116,7 +116,7 @@ UI 分组与参数一一对应（`src/components/InputPanel.tsx`）。
 | | `rental_maintenance_annual` / `consent_to_lease_fee` | 2,000 / 1,000 | 出租维修、出租同意书费 |
 | 六 租房 | `rent_growth_rates` | 全 0 ×30 | 租金年增长率列表（同时驱动租金支出与出租收入） |
 | | `rent1_monthly` / `rent2_monthly` | 13,500 / 18,000 | 小房租金 / 大房租金（N 年起首年值） |
-| | `deposit_months` / `prepaid_months` | 2 / 1 | 按金（可回收，计资产）/ 上期（真支出） |
+| | `deposit_months` / `prepaid_months` | 2 / 1 | 按金（可回收，计资产）/ 上期（=首月租金提前支付，覆盖第 1 个月租金，**非额外成本**） |
 | | `tenant_agent_fee_months` | 0.5 | 租客换约中介费 |
 | | `tenant_stamp_duty_pct_of_annual` | 0.25 | 租约印花税（占年租 %，各付一半后的租客份额） |
 | | `moving_cost_per_move` | 5,000 | 搬迁费/次 |
@@ -181,7 +181,7 @@ loan_pct = 100 − down_payment_pct
 回赠基数 rebate_base = (loan_pct > 70) ? price × 0.7 : requested_loan
                        # 高成数按保贷款的回赠只按楼价七成计，不按实际贷款额（行业实务）
 rebate_cash = rebate_base × cash_rebate_pct / 100
-若 rebate_cash > 1% × requested_loan：          # 触发金管局规则
+若 rebate_cash > 1% × requested_loan：          # 触发金管局规则（含 $0.5 容差防浮点误差）
     loan_amount = requested_loan − rebate_cash  # 整笔回赠计入贷款额 → 贷款额被调低
     （完成日买家需多备等额首期，即"抬钱上会"；警告提示）
 否则：
@@ -213,6 +213,7 @@ loan_pct ≤ 75 → 0（70–75% 段 2024.10 起免保费）
 保费(占名义贷款额) = price × loan_pct% × 费率%
 实际计收时按放款缩放：mip_premium = 上式 × (loan_amount / requested_loan)
     # 回赠令放款调低时保费略小
+覆盖值 mip_override 语义 = **实收终值**，直接采用、不随放款缩放（双引擎一致）
 ```
 
 **B6 期初总支出 `upfront_buy`**（交易完成日实付，**不预扣回赠**——回赠完成后才到账）：
@@ -232,7 +233,7 @@ upfront_buy = price − loan_amount          # 首期现金 = 楼价 − 实际�
 ```
 r_lump = initial_cash
        − deposit_months × rent1            # 按金（资产，后续计入净资产）
-       − prepaid_months × rent1            # 上期（真支出）
+       − prepaid_months × rent1            # 上期 = 首月租金提前支付（非额外成本，见 C4）
        − tenant_agent_fee_months × rent1   # 首约中介费
        − rent1 × 12 × tenant_stamp_duty%   # 首约租约印花税（租客份额）
        − moving_cost_per_move              # 搬迁费
@@ -249,18 +250,22 @@ N = 0：{1+cycle, 1+2cycle, … ≤ T}
 
 **C3 每年事件**：若是续约年，`misc = tenant_agent_fee_months × renterRentAt[y]
 + renterRentAt[y] × 12 × tenant_stamp_duty%`；若同时 `y == N`（换楼年）再加
-`moving_cost_per_move`，且**按金重置**为新租金的 `deposit_months` 倍
-（旧按金退、新按金付，净差在当年体现）。
+`moving_cost_per_move`，且**按金重置**：旧按金退回现金、新按金现金支付
+（净额 `old_deposit − deposit_months×rent2` 入现金池 `r_lump`），按金资产更新为新约按金
+——**换楼时点净资产不因按金机制跳变**（有不变量测试锁定，见 §13-8）。
 
 **C4 每月循环**（顺序敏感：先计息后入账 = 月末存入约定）：
 
 ```
 r_lump ×= (1 + investment_return/12)      # 大额资金按投资回报率月复利
 r_flow ×= (1 + deposit_rate/12)           # 定期结余按定存利率月复利
-r_flow += income_at(y) − living_expense − renterRentAt[y]   # 当月结余
+rent_charge = 0（前 prepaid_months 个月，首月租金已签约时预付）
+            = renterRentAt[y]（其余月份）
+r_flow += income_at(y) − living_expense − rent_charge
 ```
 
 其中 `income_at(y) = monthly_income × (1 + income_growth%)^(y−1)`。
+上期口径下全租期总租金支出 = 12T × 月租（期初预付 1 个月 + 月循环 12T−1 个月），无重复计费。
 
 **C5 年末**：`r_flow −= misc`；`rentNW[y] = r_lump + r_flow + deposit`（按金计资产）。
 
@@ -289,6 +294,7 @@ monthly_payment_0 = 第 1 年的 pay（用于 DSR）
 
 > 注意：月供**每年按当前余额 + 剩余月数重新摊还**，而非锁定首年月供。
 > 恒定利率下与标准还款计划一致；分段利率下等价于每年重定价重新摊还（有意选择，见 §9-8）。
+> 还款本金有 `max(0, …)` 防御：pay≤0 的浮点残差场景下余额不会反增。
 
 **D3 状态判定**（每年）：
 
@@ -356,6 +362,8 @@ amount = min(annual_prepayment, max(b_flow, 0), bal)
     cost += rebate_cash × (amount/bal) × ((lock_in − y + 1)/lock_in)   # 回赠按比例追讨
 b_flow −= cost; bal −= amount
 ```
+
+> 罚息+追讨（cost 的附加部分）不受 `b_flow` 现金约束，`b_flow` 可被扣为负值（透支口径见 §10）。
 
 **D10 年末卖出结算**（`S == y`，卖出价 = `sale_price_override ?? priceAt[S]`）：
 
@@ -427,17 +435,23 @@ buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow
 | 9 | 增长率列表不足 T 年补 0、利率列表不足补末值（`_pad_rates`） | 补 0=横盘假设，补末值=利率维持假设 |
 | 10 | 楼价/租金为年复利平滑曲线，无年内波动；默认出售价取第 S 年**末**曲线值 | 用户可用 `sale_price_override` 自定义任何卖出价 |
 | 11 | 租约印花税用参数 `0.25% × 年租`（=0.5% 各付一半后的租客份额），业主换约同份额 | 与 `lease_stamp_duty` 参考函数一致；参数化便于用户改 |
-| 12 | 换楼年（N）按金重置为新租金的 2 个月 | 旧按金退、新按金付，净差在当年体现 |
-| 13 | 不建模通胀（名义值对比）；收入增长不改变对比结论（两方案同） | 名义净资产排序与实际购买力排序在两方案间一致 |
-| 14 | 提前还款上限受 `b_flow` 现金约束；租房方案 `r_flow` 允许为负（透支） | 简化；正常参数下不会触发 |
-| 15 | 租客换楼年（N）会同时支付：首约成本（C1 已扣，基于小房租金）+ 新约成本（基于大房租金）+ 搬迁费 | 现实中首约不足一年提前解约，中介费确实难退，保守处理 |
+| 12 | 换楼年（N）按金重置：**旧按金退回现金、新按金现金支付，净额入现金池**；净资产在换楼时点不跳变 | 按金=现金转资产、退回转回现金，机制上不应改变净资产（不变量测试锁定） |
+| 13 | **上期 = 首月租金提前支付**：期初扣 `prepaid×月租`，月循环跳过前 `prepaid` 个月租金，总租金 = 12T×月租 | "押二付一"的行业口径，上期覆盖首月居住，非额外成本 |
+| 14 | `r_flow`/`b_flow` **允许为负**，负余额仍按正存款利率复利（透支近似） | 提前还款的罚息+追讨可把 b_flow 扣负；正常参数下金额极小 |
+| 15 | 封顶利率 `cap_rate` 仅为展示参数：任一年利率超封顶时**给警告**，引擎不强制套用 | 让用户感知输入异常，不静默改数 |
+| 16 | 不建模通胀（名义值对比）；收入增长不改变对比结论（两方案同） | 名义净资产排序与实际购买力排序在两方案间一致 |
+| 17 | 提前还款上限受 `b_flow` 现金约束（罚息/追讨除外） | 现金不够就少还，符合现实 |
+| 18 | 租客换楼年（N）会同时支付：首约成本（C1 已扣，基于小房租金）+ 新约成本（基于大房租金）+ 搬迁费 | 现实中首约不足一年提前解约，中介费确实难退，保守处理 |
 
-## 11. 已知展示瑕疵（净资产正确，仅明细表显示有偏）
+## 11. 展示瑕疵修复记录
 
-**卖出年（S 年）明细表的"持有成本"列显示 $0**：因为 `buy_holding_paid` 在 `sold` 置位
-之后才记录，而当年 12 个月持有成本实际已在月循环中扣除。**净资产与现金流均正确**，
-仅 `YearRow.buy_holding_paid` 这一列在卖出年偏小（差 12×holding_m）。如需修复，
-应在卖出结算前先把当年持有成本快照存下再 push。
+**卖出年（S 年）明细表"持有成本"列显示 $0 的问题已修复**：现以 `sold_at_start`（年首状态）
+记账——卖出年全年按业主状态计入 12 个月持有成本，卖出后各年记 0。净资产与明细表现已一致。
+
+另外两项 UI 层修复：
+- 数字输入框使用 draft 状态，**可整格删除后重新输入**（删除时提交 0 但显示保持空白，失焦回落显示实际值）；
+- **资金联动**：摘要区在手头现金不足期初总支出时显示红色横幅（含缺口金额），
+  "期初总支出"与"手头现金"并列为指标卡；"手头现金"字段的提示实时显示期初总支出。
 
 ---
 
@@ -453,20 +467,26 @@ buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow
 
 ## 13. 测试锚点与验证方法
 
-两侧测试集（`node scripts/smoke.ts` / `cd python && python3 test_engine.py`）共 33 项，
-关键锚点：
+两侧测试集（`node scripts/smoke.ts`：55 项断言 / `cd python && python3 test_engine.py`：67 项断言，
+Python 侧不变量测试逐行断言更多），关键锚点：
 
 | 类别 | 锚点 |
 |---|---|
 | 印花税 | 4M→100；5M→112,500；6M→135,000；6.7M→201,000；**10M→370,000**（边际减免）；21,739,121→923,913 |
 | 月供 | 3.5M @3.5%/30y → 15,716.57 |
 | 不变量 A | 租金=0、全费用=0、零利率、全现金买房 → 每一年 `buyNW − rentNW = 0` |
-| 不变量 B | 零利率、租金 1,000/月 → `buyNW − rentNW = 期初一次性支出 + 12,000×y` |
-| 默认场景 | finalBuy≈4,833,406；finalRent≈5,804,800；期初支出 1,833,500；印花税 112,500 |
+| 不变量 B | 上期=首月预付（prepaid=1）、零利率 → `buyNW − rentNW = 12,000×y`（总租金无重复计费） |
+| 按金不变量 | 零利率下 `deposit_months`=2 vs 0 → 每一年 `rentNW` 完全相等（换楼按金重置不改变净资产） |
+| 默认场景 | finalBuy≈4,833,406；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
 | 按保 | 80% 成数→保费 36,800（4M×0.92%）；90%→97,200（4.5M×2.16%）；非首置封顶 80% |
 | 回赠>1% | 350 万贷款 1.5% 回赠 → 回赠 52,500、贷款 3,447,500、期初 1,886,000 |
 | 高成数回赠基数 | 800 万楼九成按揭 1.3% → 回赠 72,800（=800万×70%×1.3%）、贷款 7,127,200（与经络按揭专栏逐分一致） |
 | 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,101,293，第 5 年末 buySold=True |
+| 锁定期卖出 | 第 2 年卖出（lock_in=3）→ 杂费 = 28,000×2/3 + 基线年末余额×1%，贷款清零，有警告 |
+| 提前还款 | 年末提前还款 → 杂费 = amount×1% + 28,000×amount/基线年末余额，贷款减少 |
+| 边界输入 | sell_year>years → 不崩溃、忽略出售、salePriceDefault=null、有警告 |
+| mip_override | 覆盖值 50,000 → mipPremium=50,000（实收终值，不缩放） |
+| 方向性 | 楼价年涨 10% → 买房赢且打平年 ≤3 |
 
 审查时任何引擎改动后：两侧测试必须全绿；若改动影响锚点数字，须先核对官方来源再同步更新
 两侧锚点。

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { DraftNumberInput } from './fields.tsx'
 
 interface HistorySource {
   label: string // 如 "RVD 楼价指数"
@@ -93,12 +94,7 @@ export function RateListEditor({ values, count, onChange, kind, history, fillCap
         {Array.from({ length: count }, (_, i) => (
           <label key={i} className="rate-cell" title={`第 ${i + 1} 年`}>
             <span>{i + 1}</span>
-            <input
-              type="number"
-              step="0.1"
-              value={values[i] ?? 0}
-              onChange={(e) => setAt(i, e.target.value === '' ? 0 : Number(e.target.value))}
-            />
+            <DraftNumberInput value={values[i] ?? 0} onCommit={(v) => setAt(i, v)} step="0.1" />
           </label>
         ))}
       </div>

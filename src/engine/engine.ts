@@ -37,6 +37,18 @@ export function simulate(inp: Inputs): SimResult {
   const rentG = padRates(inp.rentGrowthRates, T, 'zero')
   const mRateY = padRates(inp.mortgageRates, Math.max(T, inp.loanYears), 'last')
 
+  // 封顶利率提示：H 按实际利率不应超过封顶，超出说明输入可能有误
+  const overCapYears: number[] = []
+  for (let y = 1; y <= T; y++) {
+    if (mRateY[y - 1] * 100 > inp.capRate + 1e-9) overCapYears.push(y)
+  }
+  if (overCapYears.length > 0) {
+    warnings.push(
+      `按揭利率列表中有 ${overCapYears.length} 年高于封顶利率 ${inp.capRate}%（首见第 ${overCapYears[0]} 年），` +
+        `封顶利率仅为展示参数，引擎未强制套用，请确认输入。`,
+    )
+  }
+
   // 楼市值：下标 0..T（0 为现价）
   const priceAt: number[] = [inp.propertyPrice]
   for (let y = 1; y <= T; y++) priceAt.push(priceAt[y - 1] * (1 + priceG[y - 1]))
@@ -104,9 +116,11 @@ export function simulate(inp: Inputs): SimResult {
   const rebateDeducted = loanAmount < requestedLoan - 0.5
 
   if (mipEligible) {
-    // 按保费按实际放款额计（回赠令放款额调低时略小）
-    const mipOnGross = inp.mipOverride ?? mipSinglePremium(inp.propertyPrice, loanPct, inp.loanYears, inp.isFirstTimeBuyer)
-    mipPremium = mipOnGross * (loanAmount / requestedLoan)
+    // 覆盖值语义 = 实收终值，直接采用（双引擎一致，不随放款缩放）；
+    // 自动路径按名义费率计算后按实际放款缩放（回赠令放款调低时略小）
+    mipPremium =
+      inp.mipOverride ??
+      mipSinglePremium(inp.propertyPrice, loanPct, inp.loanYears, inp.isFirstTimeBuyer) * (loanAmount / requestedLoan)
   }
 
   const stampDuty = inp.stampDutyOverride ?? stampDutyResidential(inp.propertyPrice)
@@ -141,6 +155,8 @@ export function simulate(inp: Inputs): SimResult {
   let rLump = inp.initialCash
   let rFlow = 0
   let deposit = inp.depositMonths * inp.rent1Monthly
+  // 上期 = 首月租金提前支付（押二付一），覆盖第 1 个月的租金，非额外成本；
+  // 月循环将跳过前 prepaidMonths 个月的租金，此处扣的是"提前支付"的时点
   rLump -= deposit + inp.prepaidMonths * inp.rent1Monthly + inp.tenantAgentFeeMonths * inp.rent1Monthly
   rLump -= (inp.rent1Monthly * 12 * inp.tenantStampDutyPctOfAnnual) / 100
   rLump -= inp.movingCostPerMove
@@ -151,6 +167,7 @@ export function simulate(inp: Inputs): SimResult {
   const rentDepositAt: number[] = []
   const rentPaidAt: number[] = []
   const rentMiscAt: number[] = []
+  let prepaidLeft = inp.prepaidMonths // 已预付租金覆盖的剩余月数
   for (let y = 1; y <= T; y++) {
     const income = incomeAt(y)
     const rent = renterRentAt[y]
@@ -159,15 +176,26 @@ export function simulate(inp: Inputs): SimResult {
       misc += inp.tenantAgentFeeMonths * rent + (rent * 12 * inp.tenantStampDutyPctOfAnnual) / 100
       if (N > 0 && y === N) {
         misc += inp.movingCostPerMove
-        deposit = inp.depositMonths * rent // 换楼：旧按金退、新按金付
+        // 换楼：旧按金退回现金、新按金现金支付（净额入现金池），
+        // 按金资产更新为新约按金——换楼时点净资产不因按金机制跳变
+        const oldDeposit = deposit
+        deposit = inp.depositMonths * rent
+        rLump += oldDeposit - deposit
       }
     }
     let yearPaid = 0
     for (let m = 0; m < MONTHS_PER_YEAR; m++) {
       rLump *= 1 + rInvM
       rFlow *= 1 + rDepM
-      rFlow += income - inp.livingExpenseMonthly - rent
-      yearPaid += rent
+      let rentCharge: number
+      if (prepaidLeft > 0) {
+        prepaidLeft -= 1
+        rentCharge = 0 // 首月租金已在签约时预付
+      } else {
+        rentCharge = rent
+      }
+      rFlow += income - inp.livingExpenseMonthly - rentCharge
+      yearPaid += rentCharge
     }
     rFlow -= misc
     rentLumpAt.push(rLump)
@@ -188,7 +216,11 @@ export function simulate(inp: Inputs): SimResult {
   let bal = loanAmount
   let sold = false
 
-  const S = inp.sellYear
+  let S = inp.sellYear
+  if (S !== null && S > T) {
+    warnings.push(`出售年份第 ${S} 年超过模拟时长 ${T} 年，已忽略出售设置。`)
+    S = null
+  }
   const salePriceDefault: number | null = S ? priceAt[S] : null
 
   const buyNW: number[] = []
@@ -207,6 +239,7 @@ export function simulate(inp: Inputs): SimResult {
 
   for (let y = 1; y <= T; y++) {
     const rM = mRateY[y - 1] / MONTHS_PER_YEAR
+    const soldAtStart = sold // 卖出结算发生在年末，当年全年仍按业主状态记账
     const remainingMonths = inp.loanYears * MONTHS_PER_YEAR - (y - 1) * MONTHS_PER_YEAR
     const pay = !sold && bal > 0.005 ? annuityPayment(bal, rM, remainingMonths) : 0
     if (y === 1) monthlyPayment0 = pay
@@ -253,7 +286,7 @@ export function simulate(inp: Inputs): SimResult {
       let principal = 0
       if (!sold && bal > 0.005) {
         interest = bal * rM
-        principal = Math.min(pay - interest, bal)
+        principal = Math.min(Math.max(pay - interest, 0), bal) // max(0,...) 防御 pay≤0 时余额反增
         bal -= principal
         yearMortgage += interest + principal
         yearInterest += interest
@@ -308,7 +341,7 @@ export function simulate(inp: Inputs): SimResult {
     }
 
     buyMortgagePaid.push(yearMortgage)
-    buyHoldingPaid.push(sold ? 0 : holdingM * MONTHS_PER_YEAR)
+    buyHoldingPaid.push(soldAtStart ? 0 : holdingM * MONTHS_PER_YEAR)
     buyRentPaid.push(rentThisYear * MONTHS_PER_YEAR)
     buyRentalIncome.push(rentingOut ? rentalNetM * MONTHS_PER_YEAR : 0)
     buyMiscPaid.push(yearMisc)

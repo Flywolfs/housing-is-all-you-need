@@ -71,8 +71,8 @@ for row in r_b.rows:
 # 4. 与 TS 版对照的关键数字（scripts/smoke.ts 同款场景）
 r_default = simulate(DEFAULT_INPUTS)
 expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_833_406, 1)
-expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_804_800, 1)
-expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -971_394, 1)
+expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_811_897, 1)
+expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -978_490, 1)
 expect_close("默认场景 印花税", r_default.derived.stamp_duty, 112_500, 0)
 expect_close("默认场景 期初总支出", r_default.derived.upfront_buy, 1_833_500, 1)  # 完成日实付；0.8%回赠 28,000 完成后才到账
 
@@ -107,6 +107,60 @@ r_hilv = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "property_price": 8_000_0
                             "down_payment_pct": 10, "cash_rebate_pct": 1.3, "mip_override": 0}))
 expect_close("高成数回赠基数=七成楼价", r_hilv.derived.rebate_amount, 72_800, 1)
 expect_close("高成数回赠 贷款额", r_hilv.derived.loan_amount, 7_127_200, 1)
+
+# 8. 按金不变量（2.1 修复验证）：零利率下按金月数不影响每年租房净资产
+#    （按金=现金转资产，退回时现金转回；换楼重置净额入现金池，净资产不跳变）
+r_d2 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "deposit_rate_pct": 0, "investment_return_pct": 0}))
+r_d0 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "deposit_rate_pct": 0, "investment_return_pct": 0, "deposit_months": 0}))
+for row2, row0 in zip(r_d2.rows, r_d0.rows):
+    expect_close(f"按金不变量@第{row2.year}年", row2.rent_net_worth - row0.rent_net_worth, 0, 2)
+
+# 9. 上期口径（2.4 修复验证）：上期=首月租金预付，总租金支出 = 12T × 月租（无重复计费）
+# 默认场景：5 年×162,000 + 5 年×216,000 = 1,890,000；上期 13,500 + 月循环(12T−1)个月
+expect_close("上期口径 总租金=12T×月租", sum(row.rent_paid for row in r_default.rows) + 13_500, 1_890_000, 1)
+
+# 10. sell_year > years：不崩溃、忽略出售并警告
+r_over = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "years": 5, "sell_year": 10}))
+expect_close("sell>T 行数", len(r_over.rows), 5, 0)
+expect_close("sell>T 未卖出", 1 if not r_over.rows[-1].buy_sold else 0, 1, 0)
+expect_close("sell>T sale_price_default=None", 1 if r_over.derived.sale_price_default is None else 0, 1, 0)
+expect_close("sell>T 有警告", 1 if any("超过模拟时长" in w for w in r_over.warnings) else 0, 1, 0)
+
+# 11. 提前还款（D9 覆盖）：amount 受 b_flow 约束；罚息+回赠按比例追讨
+# prepay 前余额 = base.rows[0].buy_loan（月循环完全一致，提前还款发生在年末）
+base = simulate(DEFAULT_INPUTS)
+pre = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "annual_prepayment": 500_000}))
+expect_close("提前还款 amount>0", 1 if pre.rows[0].buy_prepaid > 0 else 0, 1, 0)
+amount = pre.rows[0].buy_prepaid
+expect_close(
+    "提前还款 罚息+按比例追讨",
+    pre.rows[0].buy_misc_paid,
+    amount * 0.01 + 28_000 * (amount / base.rows[0].buy_loan),
+    1,
+)
+expect_close("提前还款 贷款减少", 1 if pre.rows[1].buy_loan < base.rows[1].buy_loan else 0, 1, 0)
+
+# 12. 锁定期内卖出（D10 覆盖）：回赠追讨 2/3 + 罚息 1%×余额
+r_sale2 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 2}))
+bal_before = base.rows[1].buy_loan
+expect_close("锁定期卖出 已售", 1 if r_sale2.rows[1].buy_sold else 0, 1, 0)
+expect_close("锁定期卖出 追讨+罚息", r_sale2.rows[1].buy_misc_paid, 28_000 * 2 / 3 + bal_before * 0.01, 1)
+expect_close("锁定期卖出 贷款清零", r_sale2.rows[1].buy_loan, 0, 0.01)
+expect_close("锁定期卖出 有警告", 1 if any("罚息锁定期" in w for w in r_sale2.warnings) else 0, 1, 0)
+
+# 13. mip_override 语义 = 实收终值（2.3 修复验证，不随放款缩放）
+r_mip_ovr = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "down_payment_pct": 10, "cash_rebate_pct": 1.5, "mip_override": 50_000}))
+expect_close("mip_override 实收终值", r_mip_ovr.derived.mip_premium, 50_000, 0.01)
+
+# 14. 非零楼价增长方向性
+r_g = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "price_growth_rates": [10.0] * 30}))
+expect_close("楼价年涨10% 买房赢", 1 if r_g.derived.final_diff > 0 else 0, 1, 0)
+expect_close(
+    "楼价年涨10% 打平年≤3",
+    1 if (r_g.derived.break_even_year is not None and r_g.derived.break_even_year <= 3) else 0,
+    1,
+    0,
+)
 
 print()
 print("全部通过" if failures == 0 else f"{failures} 个失败")

@@ -1,4 +1,4 @@
-import type { Inputs } from '../types.ts'
+import type { Derived, Inputs } from '../types.ts'
 import { DEFAULT_INPUTS, MAX_YEARS } from '../engine/defaults.ts'
 import { HK_HISTORY, HK_HISTORY_PRICE_YEARS, HK_HISTORY_RENT_YEARS } from '../data/hkHistory.ts'
 import { MoneyField, NumberField, SelectField, ToggleField } from './fields.tsx'
@@ -16,7 +16,7 @@ function Group({ title, children, open = false }: { title: string; children: Rea
   )
 }
 
-export function InputPanel({ inputs, set }: { inputs: Inputs; set: Setter }) {
+export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Setter; derived: Derived }) {
   const T = inputs.years
   const sellYearOptions = [
     { value: 0, label: '不出售（持有到期末）' },
@@ -32,7 +32,12 @@ export function InputPanel({ inputs, set }: { inputs: Inputs; set: Setter }) {
           <MoneyField label="楼价现价" value={inputs.propertyPrice} onChange={(v) => set('propertyPrice', v)} />
         </div>
         <div className="field-row">
-          <MoneyField label="手头现金（第 0 年）" value={inputs.initialCash} onChange={(v) => set('initialCash', v)} />
+          <MoneyField
+            label="手头现金（第 0 年）"
+            value={inputs.initialCash}
+            onChange={(v) => set('initialCash', v)}
+            hint={`期初总支出约 ${fmtMoney(derived.upfrontBuy)}（首付+税费+佣金+律师+按保+装修）`}
+          />
         </div>
         <div className="field-block">
           <div className="block-title">楼价增长率列表（% / 每年）</div>
@@ -57,7 +62,11 @@ export function InputPanel({ inputs, set }: { inputs: Inputs; set: Setter }) {
               value={inputs.salePriceOverride ?? 0}
               suffix="$"
               step={100_000}
-              hint={inputs.salePriceOverride ? fmtMoney(inputs.salePriceOverride) : `推算值 ${fmtMoney(T >= (inputs.sellYear ?? 0) ? defaultSale(inputs) : 0)}`}
+              hint={
+                inputs.salePriceOverride
+                  ? fmtMoney(inputs.salePriceOverride)
+                  : `推算值 ${fmtMoney(derived.salePriceDefault ?? 0)}`
+              }
               onChange={(v) => set('salePriceOverride', v === 0 ? null : v)}
             />
           )}
@@ -247,13 +256,6 @@ export function InputPanel({ inputs, set }: { inputs: Inputs; set: Setter }) {
   )
 }
 
-function defaultSale(inputs: Inputs): number {
-  let v = inputs.propertyPrice
-  for (let i = 0; i < (inputs.sellYear ?? 0); i++) v *= 1 + (inputs.priceGrowthRates[i] ?? 0) / 100
-  return v
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setInputsAll(v: Inputs, set: Setter) {
   for (const k of Object.keys(v) as (keyof Inputs)[]) {
     set(k, v[k])

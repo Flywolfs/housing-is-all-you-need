@@ -25,6 +25,7 @@
 """
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Optional, List
 
 MONTHS_PER_YEAR = 12
@@ -57,21 +58,26 @@ _RESIDENTIAL_BANDS = [
 ]
 
 
+def _round_half_up(x: float) -> int:
+    """与 TS Math.round 对齐的四舍五入（.5 远离零）；Python 内置 round 是银行家舍入"""
+    return int(x + 0.5) if x >= 0 else -int(-x + 0.5)
+
+
 def stamp_duty_residential(price: float) -> int:
     """住宅从价印花税（第二标准税率表）"""
     p = max(0.0, price)
     for up_to, base, rate, over, flat in _RESIDENTIAL_BANDS:
         if p <= up_to:
             if flat is not None:
-                return round(p * flat)
+                return _round_half_up(p * flat)
             extra = (p - over) * rate if rate is not None else 0.0
-            return round(base + extra)
+            return _round_half_up(base + extra)
     return 0
 
 
 def lease_stamp_duty(monthly_rent: float, share_pct: float = 50) -> int:
     """租约印花税：租期 1-3 年为平均年租的 0.5%，业主租客各付一半"""
-    return round(monthly_rent * 12 * 0.005 * share_pct / 100)
+    return _round_half_up(monthly_rent * 12 * 0.005 * share_pct / 100)
 
 
 # ============================================================
@@ -275,8 +281,15 @@ class SimResult:
 # 五、核心模拟
 # ============================================================
 def _pad_rates(values: List[float], length: int, mode: str) -> List[float]:
-    """利率列表补齐到指定长度：增长率类补 0，利率类补最后值；返回小数（3.5% → 0.035）"""
-    clean = [float(v) for v in (values or [])]
+    """利率列表补齐到指定长度：增长率类补 0，利率类补最后值；返回小数（3.5% → 0.035）。
+    非有限数（NaN/inf/None）清洗为 0，与 TS 版行为一致"""
+    clean: List[float] = []
+    for v in (values or []):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            f = 0.0
+        clean.append(f if isfinite(f) else 0.0)
     out = []
     for i in range(length):
         if i < len(clean):
@@ -303,6 +316,14 @@ def simulate(inp: Inputs) -> SimResult:
     price_g = _pad_rates(inp.price_growth_rates, T, "zero")
     rent_g = _pad_rates(inp.rent_growth_rates, T, "zero")
     m_rate_y = _pad_rates(inp.mortgage_rates, max(T, inp.loan_years), "last")
+
+    # 封顶利率提示：H 按实际利率不应超过封顶，超出说明输入可能有误
+    over_cap_years = [y for y in range(1, T + 1) if m_rate_y[y - 1] * 100 > inp.cap_rate + 1e-9]
+    if over_cap_years:
+        warnings.append(
+            f"按揭利率列表中有 {len(over_cap_years)} 年高于封顶利率 {inp.cap_rate}%（首见第 {over_cap_years[0]} 年），"
+            f"封顶利率仅为展示参数，引擎未强制套用，请确认输入。"
+        )
 
     # 楼市值，下标 0..T（0 为现价）
     price_at = [inp.property_price]
@@ -417,12 +438,15 @@ def simulate(inp: Inputs) -> SimResult:
     r_lump = inp.initial_cash
     r_flow = 0.0
     deposit = inp.deposit_months * inp.rent1_monthly
+    # 上期 = 首月租金提前支付（押二付一），覆盖第 1 个月的租金，非额外成本；
+    # 月循环将跳过前 prepaid_months 个月的租金，此处扣的是"提前支付"的时点
     r_lump -= deposit + inp.prepaid_months * inp.rent1_monthly + inp.tenant_agent_fee_months * inp.rent1_monthly
     r_lump -= inp.rent1_monthly * 12 * inp.tenant_stamp_duty_pct_of_annual / 100
     r_lump -= inp.moving_cost_per_move
 
     rent_lump_at, rent_flow_at, rent_deposit_at = [], [], []
     rent_paid_at, rent_misc_at, rent_nw = [], [], []
+    prepaid_left = inp.prepaid_months  # 已预付租金覆盖的剩余月数
     for y in range(1, T + 1):
         income = income_at(y)
         rent = renter_rent_at[y]
@@ -431,13 +455,22 @@ def simulate(inp: Inputs) -> SimResult:
             misc += inp.tenant_agent_fee_months * rent + rent * 12 * inp.tenant_stamp_duty_pct_of_annual / 100
             if N > 0 and y == N:
                 misc += inp.moving_cost_per_move
-                deposit = inp.deposit_months * rent  # 换楼：旧按金退、新按金付
+                # 换楼：旧按金退回现金、新按金现金支付（净额入现金池），
+                # 按金资产更新为新约按金——换楼时点净资产不因按金机制跳变
+                old_deposit = deposit
+                deposit = inp.deposit_months * rent
+                r_lump += old_deposit - deposit
         year_paid = 0.0
         for _ in range(MONTHS_PER_YEAR):
             r_lump *= 1 + r_inv_m
             r_flow *= 1 + r_dep_m
-            r_flow += income - inp.living_expense_monthly - rent
-            year_paid += rent
+            if prepaid_left > 0:
+                prepaid_left -= 1
+                rent_charge = 0.0  # 首月租金已在签约时预付
+            else:
+                rent_charge = rent
+            r_flow += income - inp.living_expense_monthly - rent_charge
+            year_paid += rent_charge
         r_flow -= misc
         rent_lump_at.append(r_lump)
         rent_flow_at.append(r_flow)
@@ -457,6 +490,9 @@ def simulate(inp: Inputs) -> SimResult:
     sold = False
 
     S = inp.sell_year
+    if S is not None and S > T:
+        warnings.append(f"出售年份第 {S} 年超过模拟时长 {T} 年，已忽略出售设置。")
+        S = None
     sale_price_default = price_at[S] if S else None
 
     buy_nw, buy_bal_at, buy_sold_at = [], [], []
@@ -467,6 +503,7 @@ def simulate(inp: Inputs) -> SimResult:
 
     for y in range(1, T + 1):
         r_m = m_rate_y[y - 1] / MONTHS_PER_YEAR
+        sold_at_start = sold  # 卖出结算发生在年末，当年全年仍按业主状态记账
         remaining_months = inp.loan_years * MONTHS_PER_YEAR - (y - 1) * MONTHS_PER_YEAR
         pay = _annuity_payment(bal, r_m, remaining_months) if (not sold and bal > 0.005) else 0.0
         if y == 1:
@@ -511,7 +548,7 @@ def simulate(inp: Inputs) -> SimResult:
             principal = 0.0
             if not sold and bal > 0.005:
                 interest = bal * r_m
-                principal = min(pay - interest, bal)
+                principal = min(max(pay - interest, 0.0), bal)  # max(0,...) 防御 pay≤0 时余额反增
                 bal -= principal
                 year_mortgage += interest + principal
                 year_interest += interest
@@ -563,7 +600,7 @@ def simulate(inp: Inputs) -> SimResult:
             bal = 0.0
 
         buy_mortgage_paid.append(year_mortgage)
-        buy_holding_paid.append(0.0 if sold else holding_m * MONTHS_PER_YEAR)
+        buy_holding_paid.append(0.0 if sold_at_start else holding_m * MONTHS_PER_YEAR)
         buy_rent_paid.append(rent_this_year * MONTHS_PER_YEAR)
         buy_rental_income.append(rental_net_m * MONTHS_PER_YEAR if renting_out else 0.0)
         buy_misc_paid.append(year_misc)
