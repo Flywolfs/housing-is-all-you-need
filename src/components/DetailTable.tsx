@@ -1,9 +1,16 @@
 import type { YearRow } from '../types.ts'
 import { fmtMoney } from '../utils/format.ts'
 
+/** 悬浮提示：数据来自引擎生成的 notes（各列计算过程） */
+function cellProps(row: YearRow, key: string): { title?: string; className?: string } {
+  const note = row.notes?.[key]
+  return note ? { title: note, className: 'has-tip' } : {}
+}
+
 export function DetailTable({ rows }: { rows: YearRow[] }) {
   return (
     <div className="table-wrap">
+      <p className="table-hint">悬浮任意数字可查看该金额的计算过程（用于核对模型口径）</p>
       <table className="detail">
         <thead>
           <tr>
@@ -29,17 +36,20 @@ export function DetailTable({ rows }: { rows: YearRow[] }) {
           {rows.map((r) => (
             <tr key={r.year}>
               <td>{r.year}</td>
-              <td>{fmtMoney(r.buyPropertyValue)}</td>
-              <td>{r.buySold ? '已售' : fmtMoney(r.buyLoan)}</td>
-              <td>{fmtMoney(r.buyMortgagePaid)}</td>
-              <td>{fmtMoney(r.buyHoldingPaid)}</td>
-              <td>{r.buyRentalIncome ? fmtMoney(r.buyRentalIncome) : '—'}</td>
-              <td>{r.buyRentPaid ? fmtMoney(-r.buyRentPaid) : '—'}</td>
-              <td className="td-buy">{fmtMoney(r.buyNetWorth)}</td>
-              <td>{fmtMoney(-r.rentPaid)}</td>
-              <td>{fmtMoney(r.rentDeposit)}</td>
-              <td className="td-rent">{fmtMoney(r.rentNetWorth)}</td>
-              <td className={r.buyNetWorth >= r.rentNetWorth ? 'td-buy' : 'td-rent'}>
+              <td {...cellProps(r, 'price')}>{fmtMoney(r.buyPropertyValue)}</td>
+              <td {...cellProps(r, 'loan')}>{r.buySold ? '已售' : fmtMoney(r.buyLoan)}</td>
+              <td {...cellProps(r, 'mortgage')}>{fmtMoney(r.buyMortgagePaid)}</td>
+              <td {...cellProps(r, 'holding')}>{fmtMoney(r.buyHoldingPaid)}</td>
+              <td {...cellProps(r, 'rentalIncome')}>{r.buyRentalIncome ? fmtMoney(r.buyRentalIncome) : '—'}</td>
+              <td {...cellProps(r, 'buyRent')}>{r.buyRentPaid ? fmtMoney(-r.buyRentPaid) : '—'}</td>
+              <td className="td-buy" {...cellProps(r, 'buyNW')}>{fmtMoney(r.buyNetWorth)}</td>
+              <td {...cellProps(r, 'rentPaid')}>{fmtMoney(-r.rentPaid)}</td>
+              <td {...cellProps(r, 'deposit')}>{fmtMoney(r.rentDeposit)}</td>
+              <td className="td-rent" {...cellProps(r, 'rentNW')}>{fmtMoney(r.rentNetWorth)}</td>
+              <td
+                className={r.buyNetWorth >= r.rentNetWorth ? 'td-buy' : 'td-rent'}
+                {...cellProps(r, 'diff')}
+              >
                 {fmtMoney(r.buyNetWorth - r.rentNetWorth)}
               </td>
             </tr>

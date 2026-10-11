@@ -74,6 +74,8 @@ export interface Inputs {
 
 export interface YearRow {
   year: number
+  /** 各列计算过程的悬浮说明（TS 展示层字段，不参与计算，Python 版不含；键见 DetailTable 列） */
+  notes?: Record<string, string>
   // 买房方案
   buyPropertyValue: number // 楼市值（年末）
   buyLoan: number // 剩余贷款（年末）

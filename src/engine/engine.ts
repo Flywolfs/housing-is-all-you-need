@@ -10,6 +10,16 @@ import { maxMipTerms, mipSinglePremium } from './hkmc.ts'
 const MONTHS_PER_YEAR = 12
 const MDI_ANNUAL_CAP = 100_000 // 居所贷款利息扣除每年上限
 
+/** 悬浮说明用的金额（保留 2 位小数便于核对月供等中间值） */
+function money(x: number): string {
+  const sign = x < 0 ? '-' : ''
+  return `${sign}$${Math.abs(x).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+}
+/** 百分比显示（去尾零） */
+function pct(x: number): string {
+  return `${+(x * 100).toFixed(4)}%`
+}
+
 /** 把利率列表补齐到指定长度：增长率类补 0，利率类补最后值；返回小数（如 0.035） */
 function padRates(list: number[], len: number, mode: 'zero' | 'last'): number[] {
   const clean = (list ?? []).map((v) => (Number.isFinite(v) ? Number(v) : 0))
@@ -167,11 +177,14 @@ export function simulate(inp: Inputs): SimResult {
   const rentDepositAt: number[] = []
   const rentPaidAt: number[] = []
   const rentMiscAt: number[] = []
+  const rentNotes: Record<string, string>[] = []
+  const prepaidAmount = inp.prepaidMonths * inp.rent1Monthly
   let prepaidLeft = inp.prepaidMonths // 已预付租金覆盖的剩余月数
   for (let y = 1; y <= T; y++) {
     const income = incomeAt(y)
     const rent = renterRentAt[y]
     let misc = 0
+    let oldDepositNote = ''
     if (tenantRenewalYears.has(y)) {
       misc += inp.tenantAgentFeeMonths * rent + (rent * 12 * inp.tenantStampDutyPctOfAnnual) / 100
       if (N > 0 && y === N) {
@@ -181,15 +194,18 @@ export function simulate(inp: Inputs): SimResult {
         const oldDeposit = deposit
         deposit = inp.depositMonths * rent
         rLump += oldDeposit - deposit
+        oldDepositNote = `；旧按金 ${money(oldDeposit)} 已退回现金池`
       }
     }
     let yearPaid = 0
-    for (let m = 0; m < MONTHS_PER_YEAR; m++) {
+    let skippedThisYear = 0
+    for (let month = 0; month < MONTHS_PER_YEAR; month++) {
       rLump *= 1 + rInvM
       rFlow *= 1 + rDepM
       let rentCharge: number
       if (prepaidLeft > 0) {
         prepaidLeft -= 1
+        skippedThisYear++
         rentCharge = 0 // 首月租金已在签约时预付
       } else {
         rentCharge = rent
@@ -204,6 +220,14 @@ export function simulate(inp: Inputs): SimResult {
     rentPaidAt.push(yearPaid)
     rentMiscAt.push(misc)
     rentNW.push(rLump + rFlow + deposit)
+    rentNotes.push({
+      rentPaid:
+        skippedThisYear > 0
+          ? `月租 ${money(rent)} × ${12 - skippedThisYear} 个月 = ${money(yearPaid)}；另有签约时预付的首月租金 ${money(prepaidAmount)}（已计入期初支出，不重复计费）`
+          : `月租 ${money(rent)} × 12 = ${money(yearPaid)}`,
+      deposit: `${inp.depositMonths} 个月按金 × 当年月租 ${money(rent)} = ${money(deposit)}${oldDepositNote}`,
+      rentNW: `大额投资 ${money(rLump)} + 定期结余 ${money(rFlow)} + 按金 ${money(deposit)} = ${money(rLump + rFlow + deposit)}`,
+    })
   }
 
   // ---------- 买房方案模拟 ----------
@@ -235,11 +259,13 @@ export function simulate(inp: Inputs): SimResult {
   const buyLumpAt: number[] = []
   const buyLinkAt: number[] = []
   const buyFlowAt: number[] = []
+  const buyNotes: Record<string, string>[] = []
   let monthlyPayment0 = 0
 
   for (let y = 1; y <= T; y++) {
     const rM = mRateY[y - 1] / MONTHS_PER_YEAR
     const soldAtStart = sold // 卖出结算发生在年末，当年全年仍按业主状态记账
+    const balStart = bal // 年初贷款余额（月循环前）
     const remainingMonths = inp.loanYears * MONTHS_PER_YEAR - (y - 1) * MONTHS_PER_YEAR
     const pay = !sold && bal > 0.005 ? annuityPayment(bal, rM, remainingMonths) : 0
     if (y === 1) monthlyPayment0 = pay
@@ -257,10 +283,12 @@ export function simulate(inp: Inputs): SimResult {
 
     // 出租净收入（月）：扣空置、物业税（15%×80%）、维修损耗
     let rentalNetM = 0
+    let rentalGross = 0
+    let rentalTax = 0
     if (rentingOut) {
-      const gross = (flatRentAt[y] * (MONTHS_PER_YEAR - inp.vacancyMonths)) / MONTHS_PER_YEAR
-      const tax = gross * ((inp.propertyTaxRatePct / 100) * (inp.propertyTaxAllowancePct / 100))
-      rentalNetM = gross - tax - inp.rentalMaintenanceAnnual / MONTHS_PER_YEAR
+      rentalGross = (flatRentAt[y] * (MONTHS_PER_YEAR - inp.vacancyMonths)) / MONTHS_PER_YEAR
+      rentalTax = rentalGross * ((inp.propertyTaxRatePct / 100) * (inp.propertyTaxAllowancePct / 100))
+      rentalNetM = rentalGross - rentalTax - inp.rentalMaintenanceAnnual / MONTHS_PER_YEAR
     }
 
     // 出租换约杂费（业主）：首次出租同意书费；每个新约的代理费 + 租约印花税（业主一半）
@@ -324,7 +352,9 @@ export function simulate(inp: Inputs): SimResult {
     }
 
     // 年末卖出 → 转租房状态
+    let balBeforeSale = 0
     if (S === y && !sold) {
+      balBeforeSale = bal
       const salePrice = inp.salePriceOverride ?? salePriceDefault ?? priceAt[y]
       let net = salePrice - (salePrice * inp.sellAgencyFeePct) / 100 - inp.legalFeeSell - Math.max(bal, 0)
       if (y <= inp.lockInYears) {
@@ -351,7 +381,40 @@ export function simulate(inp: Inputs): SimResult {
     buyFlowAt.push(bFlow)
     buyBalAt.push(bal)
     buySoldAt.push(sold)
-    buyNW.push((sold ? 0 : priceAt[y] - bal) + bLump + bLink + bFlow)
+    const yearNW = (sold ? 0 : priceAt[y] - bal) + bLump + bLink + bFlow
+    buyNW.push(yearNW)
+
+    // ---- 悬浮计算过程说明（展示层） ----
+    const note: Record<string, string> = {}
+    note.price =
+      y === 1
+        ? `买入价 ${money(inp.propertyPrice)} × (1 + 第 1 年楼价涨幅 ${pct(priceG[0])}) = ${money(priceAt[y])}`
+        : `上年末 ${money(priceAt[y - 1])} × (1 + 第 ${y} 年楼价涨幅 ${pct(priceG[y - 1])}) = ${money(priceAt[y])}`
+    if (soldAtStart) {
+      note.loan = '已于此前年度卖出，贷款清零'
+      note.mortgage = '已卖出，无月供'
+      note.holding = '已卖出，无持有成本'
+    } else {
+      note.loan = sold
+        ? `年初 ${money(balStart)} − 年内还本 ${money(yearMortgage - yearInterest)} = ${money(balBeforeSale)}；年末卖出，售款优先偿清贷款`
+        : `年初余额 ${money(balStart)} − 年内还本 ${money(yearMortgage - yearInterest)} = ${money(bal)}`
+      note.mortgage = `等额本息：年初余额 ${money(balStart)}、年利率 ${pct(rM * 12)}、剩余 ${remainingMonths} 期 → 月供 ${money(pay)} × 12 = ${money(yearMortgage)}（利息 ${money(yearInterest)} + 本金 ${money(yearMortgage - yearInterest)}）`
+      note.holding = `(管理费 ${money(inp.mgmtFeeMonthly)} + 差饷地租 ${money(ratesM)} + 火险 ${money(inp.fireInsuranceAnnual / MONTHS_PER_YEAR)} + 维修 ${money(maintM)}) × 12 个月 = ${money(holdingM * MONTHS_PER_YEAR)}`
+    }
+    note.rentalIncome = rentingOut
+      ? `市值租金 ${money(flatRentAt[y])} × (12 − ${inp.vacancyMonths})/12 = ${money(rentalGross)}；物业税 = 毛租 × ${inp.propertyTaxRatePct}% × ${inp.propertyTaxAllowancePct}% = ${money(rentalTax)}；扣出租维修 ${money(inp.rentalMaintenanceAnnual / MONTHS_PER_YEAR)}/月 → 净 ${money(rentalNetM)}/月 × 12 = ${money(rentalNetM * MONTHS_PER_YEAR)}`
+      : '当年未出租，无租金收入'
+    note.buyRent =
+      rentThisYear > 0
+        ? `月租 ${money(rentThisYear)} × 12${sold ? '（卖出后自租）' : `（第 ${N} 年起租大房）`} = ${money(rentThisYear * MONTHS_PER_YEAR)}`
+        : '自住，无租房支出'
+    note.buyNW = sold
+      ? `大额投资 ${money(bLump)}（已含卖楼净回笼）+ M-link ${money(bLink)} + 定期结余 ${money(bFlow)} = ${money(yearNW)}`
+      : `(楼市值 ${money(priceAt[y])} − 贷款 ${money(bal)}) + 大额投资 ${money(bLump)} + M-link ${money(bLink)} + 定期结余 ${money(bFlow)} = ${money(yearNW)}`
+    if (rentNW[y - 1] !== undefined) {
+      note.diff = `买房 ${money(yearNW)} − 租房 ${money(rentNW[y - 1])} = ${money(yearNW - rentNW[y - 1])}`
+    }
+    buyNotes.push(note)
   }
 
   // ---------- 汇总 ----------
@@ -359,6 +422,7 @@ export function simulate(inp: Inputs): SimResult {
   for (let y = 1; y <= T; y++) {
     rows.push({
       year: y,
+      notes: { ...rentNotes[y - 1], ...buyNotes[y - 1] },
       buyPropertyValue: priceAt[y],
       buyLoan: buyBalAt[y - 1],
       buyLump: buyLumpAt[y - 1],

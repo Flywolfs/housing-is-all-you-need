@@ -69,10 +69,10 @@
 | `src/engine/engine.ts` | `padRates` / `annuityPayment` / `simulate` | L14 / L25 / L31 | 同上 TS 版；simulate 内部分段：曲线预计算 L35、按揭设定 L63、共用参数 L125、租房模拟 L140、买房模拟 L181、汇总 L324 |
 | `src/engine/stampDuty.ts` | `RESIDENTIAL_BANDS` / `stampDutyResidential` | L14 / L30 | 同 `stamp_duty_residential` |
 | `src/engine/hkmc.ts` | `maxMipTerms` / 费率表 / `mipSinglePremium` | L7 / L20–34 / L42 | 同 `max_mip_terms` / `mip_single_premium` |
-| `src/types.ts` | `Inputs / SimResult / YearRow / Derived` | — | TS 类型定义 |
+| `src/types.ts` | `Inputs / SimResult / YearRow / Derived` | — | TS 类型定义（YearRow.notes 为各列计算过程的悬浮说明，**仅展示层，不参与计算**，Python 版不含） |
 | `src/engine/defaults.ts` | `DEFAULT_INPUTS / MAX_YEARS` | — | 默认值（元朗 $500 万场景） |
 | `src/data/hkHistory.ts` | `HK_HISTORY` | — | RVD 官方楼价/租金指数 1981–2025 逐年涨跌幅（`scripts/parse_rvd.mjs` 生成） |
-| `scripts/smoke.ts`、`python/test_engine.py` | — | — | 33 项锚点测试，两侧同步 |
+| `scripts/smoke.ts`、`python/test_engine.py` | — | — | 锚点测试（TS 55 项 / Python 67 项断言），两侧同步 |
 
 UI 层（`src/components/`）只做输入钳制与结果展示，**不含任何模型计算**，审查重心在引擎。
 

@@ -368,6 +368,18 @@ body {
   height: 380px;
 }
 
+.table-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.has-tip {
+  cursor: help;
+  text-decoration: underline dotted rgba(107, 114, 128, 0.6);
+  text-underline-offset: 3px;
+}
+
 /* ---------- 明细表 ---------- */
 .table-wrap {
   overflow-x: auto;
