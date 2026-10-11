@@ -301,8 +301,21 @@ monthly_payment_0 = 第 1 年的 pay（用于 DSR）
 ```
 self_occupied = !sold && (N == 0 || y < N)      # 自住：付持有成本、无租金支出
 living_rented = !sold && N > 0 && y >= N        # 已换房：付持有成本 + 付大房租金
-renting_out   = !sold && rent_out_enabled && N > 0 && y >= N   # 出租收租
+renting_out   = !sold && rentOutEnabled && N > 0 && y >= N   # 出租收租
 rent_this_year = (sold || living_rented) ? renterRentAt[y] : 0
+rent_tenant = rent_this_year > 0                # 今年处于租房居住状态
+entered_this_year = rent_tenant && !上年 rent_tenant   # 新进入租房状态
+```
+
+**D3b 租客侧费用与按金（与租房方案对称）**：
+
+```
+进入租房状态年（首年换大房 y==N，或卖出次年）：
+    按金 buyDeposit = deposit_months × rent_this_year   # 现金→资产（从 b_flow 转出），退租可回收
+    签约费用（b_flow 扣）= tenant_agent_fee_months × 租金 + 租金×12×stamp_duty% + moving_cost
+之后每 cycle 年续约（b_flow 扣）= 中介费 + 租约印花税（租客份额）
+按金保持进入时的额度不变（HK 惯例：续约按金不重置），计入每年净资产
+上期（首月预付）的时点效应忽略：月租照付（总额相同，差 1 个月利息 <$50）
 ```
 
 **D4 持有成本（月）** `holding_m`——**只要未卖出就全额承担**（包括出租期间）：
@@ -379,7 +392,7 @@ b_lump += net + b_link; b_link = 0; sold = True; bal = 0
 **D11 年末净资产**：
 
 ```
-buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow
+buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow + buy_deposit
 ```
 
 ---
@@ -467,7 +480,7 @@ buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow
 
 ## 13. 测试锚点与验证方法
 
-两侧测试集（`node scripts/smoke.ts`：55 项断言 / `cd python && python3 test_engine.py`：67 项断言，
+两侧测试集（`node scripts/smoke.ts`：58 项断言 / `cd python && python3 test_engine.py`：69 项断言，
 Python 侧不变量测试逐行断言更多），关键锚点：
 
 | 类别 | 锚点 |
@@ -477,11 +490,12 @@ Python 侧不变量测试逐行断言更多），关键锚点：
 | 不变量 A | 租金=0、全费用=0、零利率、全现金买房 → 每一年 `buyNW − rentNW = 0` |
 | 不变量 B | 上期=首月预付（prepaid=1）、零利率 → `buyNW − rentNW = 12,000×y`（总租金无重复计费） |
 | 按金不变量 | 零利率下 `deposit_months`=2 vs 0 → 每一年 `rentNW` 完全相等（换楼按金重置不改变净资产） |
-| 默认场景 | finalBuy≈4,833,406；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
+| 默认场景 | finalBuy≈4,792,081；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
+| 按金对称 | 买房换房年（第 6 年）buyDeposit=36,000（2×18,000）、签约杂费 22,695（租客 14,540 + 业主 8,155）；卖出次年转租同理 |
 | 按保 | 80% 成数→保费 36,800（4M×0.92%）；90%→97,200（4.5M×2.16%）；非首置封顶 80% |
 | 回赠>1% | 350 万贷款 1.5% 回赠 → 回赠 52,500、贷款 3,447,500、期初 1,886,000 |
 | 高成数回赠基数 | 800 万楼九成按揭 1.3% → 回赠 72,800（=800万×70%×1.3%）、贷款 7,127,200（与经络按揭专栏逐分一致） |
-| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,101,293，第 5 年末 buySold=True |
+| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,059,967，第 5 年末 buySold=True |
 | 锁定期卖出 | 第 2 年卖出（lock_in=3）→ 杂费 = 28,000×2/3 + 基线年末余额×1%，贷款清零，有警告 |
 | 提前还款 | 年末提前还款 → 杂费 = amount×1% + 28,000×amount/基线年末余额，贷款减少 |
 | 边界输入 | sell_year>years → 不崩溃、忽略出售、salePriceDefault=null、有警告 |

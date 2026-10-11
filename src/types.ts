@@ -82,6 +82,7 @@ export interface YearRow {
   buyLump: number // 大额投资（年末）
   buyLink: number // Mortgage-Link 余额（年末）
   buyFlow: number // 定期储蓄（年末）
+  buyDeposit: number // 买房方案租房阶段的按金（年末，可回收资产）
   buyNetWorth: number // 净资产
   buySold: boolean // 该年末已卖出
   // 买房方案当年现金流（合计）

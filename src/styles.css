@@ -375,9 +375,50 @@ body {
 }
 
 .has-tip {
-  cursor: help;
+  cursor: pointer;
   text-decoration: underline dotted rgba(107, 114, 128, 0.6);
   text-underline-offset: 3px;
+}
+
+table.detail td.cell-selected {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+  background: #eff6ff;
+}
+
+.calc-panel {
+  border: 1px solid #bfdbfe;
+  background: #f0f7ff;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.calc-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.calc-panel-close {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.calc-panel-body {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-line;
+  margin: 0;
+  overflow-x: auto;
 }
 
 /* ---------- 明细表 ---------- */
