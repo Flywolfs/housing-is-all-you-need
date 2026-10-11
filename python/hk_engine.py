@@ -232,6 +232,7 @@ class YearRow:
     buy_lump: float                # 大额投资（年末）
     buy_link: float                # Mortgage-Link 余额（年末）
     buy_flow: float                # 定期储蓄（年末）
+    buy_deposit: float             # 买房方案租房阶段的按金（年末，可回收资产）
     buy_net_worth: float           # 净资产
     buy_sold: bool                 # 该年末已卖出
     # 买房方案当年现金流
@@ -496,9 +497,12 @@ def simulate(inp: Inputs) -> SimResult:
     sale_price_default = price_at[S] if S else None
 
     buy_nw, buy_bal_at, buy_sold_at = [], [], []
-    buy_lump_at, buy_link_at, buy_flow_at = [], [], []
+    buy_lump_at, buy_link_at, buy_flow_at, buy_deposit_at = [], [], [], []
     buy_mortgage_paid, buy_holding_paid, buy_rent_paid = [], [], []
     buy_rental_income, buy_misc_paid, buy_prepaid = [], [], []
+    buy_deposit = 0.0        # 买房方案租房阶段的按金（现金→资产，退租可回收）
+    rental_entered_year: Optional[int] = None
+    prev_rent_tenant = False
     monthly_payment_0 = 0.0
 
     for y in range(1, T + 1):
@@ -514,6 +518,9 @@ def simulate(inp: Inputs) -> SimResult:
         living_rented = (not sold) and N > 0 and y >= N
         renting_out = (not sold) and inp.rent_out_enabled and N > 0 and y >= N
         rent_this_year = renter_rent_at[y] if (sold or living_rented) else 0.0
+        rent_tenant = rent_this_year > 0  # 今年处于租房居住状态（换大房或卖出后）
+        entered_this_year = rent_tenant and not prev_rent_tenant
+        prev_rent_tenant = rent_tenant
 
         # 持有成本（月）：管理费 + 差饷地租(≈8%×市值租金) + 火险 + 维修
         rates_m = inp.rates_gov_rent_override if inp.rates_gov_rent_override is not None else flat_rent_at[y - 1] * 0.08
@@ -533,6 +540,22 @@ def simulate(inp: Inputs) -> SimResult:
             let_misc += inp.consent_to_lease_fee
         if renting_out and (y == N or (y - N) % cycle == 0):
             let_misc += inp.let_agent_fee_months * flat_rent_at[y] + flat_rent_at[y] * 12 * inp.tenant_stamp_duty_pct_of_annual / 100
+
+        # 租客侧费用（与租房方案对称）：进入租房状态年付按金（现金→资产）+中介费+租约印花税+搬迁费；
+        # 之后每 cycle 年续约付中介费+印花税。上期（首月预付）的时点效应忽略，月租照付
+        rental_fees = 0.0
+        if entered_this_year:
+            rental_entered_year = y
+            buy_deposit = inp.deposit_months * rent_this_year
+            rental_fees = (
+                inp.tenant_agent_fee_months * rent_this_year
+                + rent_this_year * 12 * inp.tenant_stamp_duty_pct_of_annual / 100
+                + inp.moving_cost_per_move
+            )
+            b_flow -= buy_deposit + rental_fees
+        elif rent_tenant and rental_entered_year is not None and y > rental_entered_year and (y - rental_entered_year) % cycle == 0:
+            rental_fees = inp.tenant_agent_fee_months * rent_this_year + rent_this_year * 12 * inp.tenant_stamp_duty_pct_of_annual / 100
+            b_flow -= rental_fees
 
         year_mortgage = 0.0
         year_interest = 0.0
@@ -563,7 +586,7 @@ def simulate(inp: Inputs) -> SimResult:
             )
             b_flow += inflow - outflow
 
-        year_misc = let_misc
+        year_misc = let_misc + rental_fees
 
         # 居所贷款利息扣除（自住年份，年末一次性计入结余）
         if inp.mdi_enabled and self_occupied and year_interest > 0:
@@ -608,9 +631,10 @@ def simulate(inp: Inputs) -> SimResult:
         buy_lump_at.append(b_lump)
         buy_link_at.append(b_link)
         buy_flow_at.append(b_flow)
+        buy_deposit_at.append(buy_deposit)
         buy_bal_at.append(bal)
         buy_sold_at.append(sold)
-        buy_nw.append((0.0 if sold else price_at[y] - bal) + b_lump + b_link + b_flow)
+        buy_nw.append((0.0 if sold else price_at[y] - bal) + b_lump + b_link + b_flow + buy_deposit)
 
     # ---------- 汇总 ----------
     rows = [
@@ -621,6 +645,7 @@ def simulate(inp: Inputs) -> SimResult:
             buy_lump=buy_lump_at[y - 1],
             buy_link=buy_link_at[y - 1],
             buy_flow=buy_flow_at[y - 1],
+            buy_deposit=buy_deposit_at[y - 1],
             buy_net_worth=buy_nw[y - 1],
             buy_sold=buy_sold_at[y - 1],
             buy_mortgage_paid=buy_mortgage_paid[y - 1],

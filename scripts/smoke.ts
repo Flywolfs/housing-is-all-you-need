@@ -100,10 +100,18 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 {
   const r = simulate({ ...DEFAULT_INPUTS, sellYear: 5, salePriceOverride: 4_000_000 })
   expectTrue('卖出场景 第5年末已售', r.rows[4].buySold)
-  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_101_293, 2)
+  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_059_967, 2)
+  expectTrue('卖出后转租有按金', r.rows[5].buyDeposit === 36_000) // 卖出次年恰逢 N=6 → 租大房：2×18,000
   console.log('\n=== 第5年以$4M卖出（跌20%）===')
   console.log('final buy:', Math.round(r.derived.finalBuy), 'final rent:', Math.round(r.derived.finalRent))
   console.log('Y5 row:', JSON.stringify(r.rows[4], null, 0))
+}
+
+// 5b. 买房方案换房后的按金对称性（默认第 6 年租大房：2×18,000）
+{
+  const r = simulate(DEFAULT_INPUTS)
+  expectClose('换房年按金 36,000', r.rows[5].buyDeposit, 36_000, 1)
+  expectClose('换房年签约杂费', r.rows[5].buyMiscPaid, 14_540 + 8_155, 1) // 租客签约 14,540 + 业主换约 8,155
 }
 
 // 6. 回赠 >1%（金管局规则 + 市场实务）：回赠按原贷款额计，整笔回赠从贷款额扣除，

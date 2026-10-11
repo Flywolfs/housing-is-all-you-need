@@ -70,11 +70,15 @@ for row in r_b.rows:
 
 # 4. 与 TS 版对照的关键数字（scripts/smoke.ts 同款场景）
 r_default = simulate(DEFAULT_INPUTS)
-expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_833_406, 1)
+expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_792_081, 1)
 expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_811_897, 1)
-expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -978_490, 1)
+expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -1_019_816, 1)
 expect_close("默认场景 印花税", r_default.derived.stamp_duty, 112_500, 0)
 expect_close("默认场景 期初总支出", r_default.derived.upfront_buy, 1_833_500, 1)  # 完成日实付；0.8%回赠 28,000 完成后才到账
+
+# 4b. 买房方案换房后的按金对称性：第 6 年租大房付按金 2×18,000 + 签约费（中介+印花+搬迁）
+expect_close("换房年按金 36,000", r_default.rows[5].buy_deposit, 36_000, 1)
+expect_close("换房年签约杂费", r_default.rows[5].buy_misc_paid, 14_540 + 8_155, 1)  # 租客签约 14,540 + 业主换约 8,155
 
 # 5. 按保：80% 成数 → 4M×0.92% = $36,800；90% 成数 → 4.5M×2.16% = $97,200
 r_mip80 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "down_payment_pct": 20}))
@@ -88,7 +92,7 @@ expect_close("非首置 LTV 封顶 80", r_nonfirst.derived.ltv_pct, 80, 0.1)
 
 # 7. 第5年以$4M卖出（跌20%，锁定期外无罚息）
 r_sale = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 5, "sale_price_override": 4_000_000}))
-expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_101_293, 2)
+expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_059_967, 2)
 expect_close("卖出场景 第5年末已售", 1 if r_sale.rows[4].buy_sold else 0, 1, 0)
 
 # 7. 回赠 >1%（金管局规则 + 市场实务）：回赠按原贷款额计，整笔回赠从贷款额扣除，
