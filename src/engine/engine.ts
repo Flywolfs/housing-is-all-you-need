@@ -267,13 +267,25 @@ export function simulate(inp: Inputs): SimResult {
               `− 搬迁费 ${money(inp.movingCostPerMove)}`,
               `= 大额投资期初 ${money(rlStart)}；定期结余期初 $0`,
             ]
+          : []),
+        ...(y === 1
+          ? ['大额投资年初 = 期初推导结果（见上）；定期结余年初 = $0']
           : ['大额投资年初 = 上年末（见上年"租净资产"）']),
-        `大额投资 ${money(rLump)} = 年初 ${money(rlStart)} + 当年利息 ${money(rlInt)}（= 年初 × 年利率 ${inp.investmentReturnPct}% 按月复利）${lumpAdj !== 0 ? ` + 按金重置净额 ${money(lumpAdj)}（旧按金退回现金、新按金付出现金）` : ''}`,
-        `定期结余 ${money(rFlow)} = 年初 ${money(rfStart)} + 当年利息 ${money(rfInt)}（年利率 ${inp.depositRatePct}% 按月复利）+ 当年月度结余 ${money(rentYearSurplus)}`,
-        `  月度结余 = 收入 ${money(income * 12)}（月 ${money(income)} × 12）− 生活开支 ${money(inp.livingExpenseMonthly * 12)} − 租金 ${money(yearPaid)}`,
-        misc > 0
-          ? `− 换约杂费 ${money(misc)}（中介 ${money(miscAgent)} + 租约印花税 ${money(miscStamp)}${miscMoving > 0 ? ` + 搬迁 ${money(miscMoving)}` : ''}）`
-          : '',
+        `+ 当年利息 ${money(rlInt)} = 年初 × 年利率 ${inp.investmentReturnPct}%（输入）按月复利${lumpAdj !== 0 ? `；换楼按金重置净额 ${money(lumpAdj)}（旧按金退回现金、新按金付出现金，年初调整）` : ''}`,
+        `= 年末 ${money(rLump)}`,
+        `定期结余：`,
+        y === 1 ? `年初 = $0（期初现金全部进大额投资）` : `年初 = 上年末 ${money(rfStart)}`,
+        `+ 当年利息 ${money(rfInt)} = 年利率 ${inp.depositRatePct}%（输入）按月复利（每月对月初余额 × 月利率，逐月累加）`,
+        `+ 月度结余 ${money(rentYearSurplus)} = 12 个月"收入 − 支出"之和：`,
+        `    收入 ${money(income * 12)}（月 ${money(income)} × 12）`,
+        `    − 生活开支 ${money(inp.livingExpenseMonthly * 12)}（月 ${money(inp.livingExpenseMonthly)} × 12）`,
+        `    − 租金 ${money(yearPaid)}（见"租金支出"列）`,
+        ...(misc > 0
+          ? [
+              `− 换约杂费 ${money(misc)} = 中介 ${money(miscAgent)} + 租约印花税 ${money(miscStamp)}${miscMoving > 0 ? ` + 搬迁 ${money(miscMoving)}` : ''}（年末扣，不在月度结余内）`,
+            ]
+          : []),
+        `= 年末 ${money(rFlow)}（年初 ${money(rfStart)} + 利息 ${money(rfInt)} + 月度结余 ${money(rentYearSurplus)}${misc > 0 ? ` − 杂费 ${money(misc)}` : ''}）`,
         `按金 ${money(deposit)}（资产，退租可回收）`,
         `合计净资产 = ${money(rLump)} + ${money(rFlow)} + ${money(deposit)} = ${money(rLump + rFlow + deposit)}`,
       ]
@@ -565,34 +577,46 @@ export function simulate(inp: Inputs): SimResult {
           ].join('\n')
         : '自住，无租房支出'
     const surplusLines = [
-      `月度结余 ${money(yearSurplus)} = 全年 12 个月的（收入 − 支出）之和：`,
-      `  + 收入 ${money(income * 12)}（月 ${money(income)} × 12${inp.incomeGrowthPct > 0 ? `，年收入增长 ${inp.incomeGrowthPct}%` : ''}）`,
-      `  − 生活开支 ${money(inp.livingExpenseMonthly * 12)}（月 ${money(inp.livingExpenseMonthly)} × 12）`,
-      ...(soldAtStart ? [] : [`  − 月供 ${money(yearMortgage)}`]),
-      `  − 持有成本 ${money(soldAtStart ? 0 : holdingM * MONTHS_PER_YEAR)}`,
-      ...(rentThisYear > 0 ? [`  − 租房 ${money(rentThisYear * MONTHS_PER_YEAR)}`] : []),
-      ...(rentingOut ? [`  + 净租金收入 ${money(rentalNetM * MONTHS_PER_YEAR)}`] : []),
-      ...(letMisc > 0 ? [`  − 出租换约杂费 ${money(letMisc)}（代理费+租约印花税，见"持有成本"同级的业主费用）`] : []),
+      `收入 ${money(income * 12)}（月 ${money(income)} × 12${inp.incomeGrowthPct > 0 ? `，年收入增长 ${inp.incomeGrowthPct}%` : ''}）`,
+      `− 生活开支 ${money(inp.livingExpenseMonthly * 12)}（月 ${money(inp.livingExpenseMonthly)} × 12）`,
+      ...(soldAtStart ? [] : [`− 月供 ${money(yearMortgage)}（12 个月等额本息，见"月供"列）`]),
+      `− 持有成本 ${money(soldAtStart ? 0 : holdingM * MONTHS_PER_YEAR)}`,
+      ...(rentThisYear > 0 ? [`− 租房 ${money(rentThisYear * MONTHS_PER_YEAR)}`] : []),
+      ...(rentingOut ? [`+ 净租金收入 ${money(rentalNetM * MONTHS_PER_YEAR)}`] : []),
+      ...(letMisc > 0 ? [`− 出租换约杂费 ${money(letMisc)}（业主侧代理费+租约印花税）`] : []),
+    ]
+    const flowFlowParts = [
+      `年初 ${money(flowStart)}`,
+      `+ 利息 ${money(flowInt)}`,
+      `+ 月度结余 ${money(yearSurplus)}`,
+      ...(mdiIn > 0 ? [`+ 扣税返还 ${money(mdiIn)}`] : []),
+      ...(prepayCost > 0 ? [`− 提前还款 ${money(prepayCost)}`] : []),
+      ...(rentalFees > 0 ? [`− 签约/换约费 ${money(rentalFees)}`] : []),
     ]
     const flowLines = [
-      ...(y === 1 ? [`定期结余期初 = $0（期初现金扣除各项买房支出后全部归入大额投资/M-link）`] : [`定期结余年初 = 上年末 ${money(flowStart)}`]),
-      `定期结余 ${money(bFlow)} = 年初 ${money(flowStart)} + 当年利息 ${money(flowInt)}（年利率 ${inp.depositRatePct}%（输入）按月复利）+ 月度结余 ${money(yearSurplus)}`,
-      ...surplusLines,
+      ...(y === 1
+        ? [`年初 = $0（期初现金扣除买房支出后全部归入大额投资/M-link，定期结余从零开始）`]
+        : [`年初 = 上年末 ${money(flowStart)}（见第 ${y - 1} 年"净资产"）`]),
+      `+ 当年利息 ${money(flowInt)} = 年利率 ${inp.depositRatePct}%（输入）按月复利：每月对月初余额 × 月利率（年利率/12），逐月累加；因各月余额逐月增长，全年利息介于"年初×年利率"与"年末×年利率"之间`,
+      `+ 月度结余 ${money(yearSurplus)} = 12 个月"收入 − 支出"之和：`,
+      ...surplusLines.map((l) => `    ${l}`),
       ...(mdiIn > 0
-        ? [`+ 利息扣税返还 ${money(mdiIn)} = min(当年按揭利息 ${money(yearInterest)}, 上限 ${money(MDI_ANNUAL_CAP)}) × 边际税率 ${inp.mdiMarginalRatePct}%（自住年适用）`]
+        ? [
+            `+ 利息扣税返还 ${money(mdiIn)} = min(当年按揭利息 ${money(yearInterest)}, 上限 ${money(MDI_ANNUAL_CAP)}) × 边际税率 ${inp.mdiMarginalRatePct}%`,
+            `    （年末一次性入账，不包含在上面的月度结余内）`,
+          ]
         : []),
       ...(prepayCost > 0
-        ? [`− 提前还款 ${money(yearPrepaid)}（含罚息/回赠追讨 ${money(prepayCost - yearPrepaid)} = 本金 × ${inp.prepayPenaltyPct}% + 回赠按剩余锁定期比例）`]
+        ? [`− 提前还款 ${money(yearPrepaid)}（年末从结余扣，含罚息/回赠追讨 ${money(prepayCost - yearPrepaid)}）`]
         : []),
       ...(rentalFees > 0
         ? enteredThisYear
           ? [
-              `− 租房按金 ${money(buyDeposit)}（转资产，见"按金资产"列）`,
-              `− 租房签约费 ${money(rentalFeesAgent + rentalFeesStamp + rentalFeesMoving)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)} + 搬迁 ${money(rentalFeesMoving)}`,
+              `− 租房签约费 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)} + 搬迁 ${money(rentalFeesMoving)}（年初扣；另付按金 ${money(buyDeposit)} 转为资产，见"按金资产"列）`,
             ]
-          : [`− 换约费用 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)}`]
+          : [`− 换约费用 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)}（年初扣）`]
         : []),
-      `= 年末 ${money(bFlow)}`,
+      `= 年末 ${money(bFlow)}（${flowFlowParts.join(' ')}）`,
     ]
     const lumpLines = [
       ...(y === 1
