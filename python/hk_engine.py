@@ -172,7 +172,9 @@ class Inputs:
     lock_in_years: int = 3                 # 罚息 / 回赠锁定期（年）
     prepay_penalty_pct: float = 1          # 提前还款罚息 %
     annual_prepayment: float = 0           # 每年年末提前还款额 $
+    prepayment_start_year: int = 4         # 提前还款起始年（第 Y 年起年末还款；默认 = 默认罚息期结束后）
     mortgage_link_enabled: bool = True     # Mortgage-Link（上限 = 贷款额 50%）
+    mortgage_link_auto_deposit: bool = True  # 每月结余自动优先存入 M-Link（至上限，超出进定期）
     mdi_enabled: bool = True               # 居所贷款利息扣除（自住期间）
     mdi_marginal_rate_pct: float = 17      # 薪俸税边际税率 %
 
@@ -559,6 +561,8 @@ def simulate(inp: Inputs) -> SimResult:
 
         year_mortgage = 0.0
         year_interest = 0.0
+        year_surplus = 0.0
+        link_auto_in = 0.0
         for _ in range(MONTHS_PER_YEAR):
             b_lump *= 1 + r_inv_m
             b_flow *= 1 + r_dep_m
@@ -584,7 +588,16 @@ def simulate(inp: Inputs) -> SimResult:
                 + (0.0 if sold else holding_m)
                 + (let_misc / MONTHS_PER_YEAR if renting_out else 0.0)
             )
-            b_flow += inflow - outflow
+            surplus = inflow - outflow
+            year_surplus += surplus
+            # M-Link 自动存款：结余（正数部分）优先存入 M-Link 至上限（利率=按揭利率 > 定期利率），超出进定期
+            if inp.mortgage_link_auto_deposit and (not sold) and surplus > 0 and b_link < link_cap:
+                to_link = min(surplus, link_cap - b_link)
+                b_link += to_link
+                link_auto_in += to_link
+                b_flow += surplus - to_link
+            else:
+                b_flow += surplus
 
         year_misc = let_misc + rental_fees
 
@@ -594,7 +607,7 @@ def simulate(inp: Inputs) -> SimResult:
 
         # 年末提前还款（从定期结余扣款）
         year_prepaid = 0.0
-        if not sold and inp.annual_prepayment > 0 and bal > 0.005:
+        if not sold and inp.annual_prepayment > 0 and y >= inp.prepayment_start_year and bal > 0.005:
             amount = min(inp.annual_prepayment, max(b_flow, 0.0), bal)
             if amount > 0:
                 cost = amount

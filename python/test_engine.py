@@ -70,9 +70,9 @@ for row in r_b.rows:
 
 # 4. 与 TS 版对照的关键数字（scripts/smoke.ts 同款场景）
 r_default = simulate(DEFAULT_INPUTS)
-expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_792_081, 1)
+expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_905_860, 1)
 expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_811_897, 1)
-expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -1_019_816, 1)
+expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -906_036, 1)
 expect_close("默认场景 印花税", r_default.derived.stamp_duty, 112_500, 0)
 expect_close("默认场景 期初总支出", r_default.derived.upfront_buy, 1_833_500, 1)  # 完成日实付；0.8%回赠 28,000 完成后才到账
 
@@ -92,7 +92,7 @@ expect_close("非首置 LTV 封顶 80", r_nonfirst.derived.ltv_pct, 80, 0.1)
 
 # 7. 第5年以$4M卖出（跌20%，锁定期外无罚息）
 r_sale = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 5, "sale_price_override": 4_000_000}))
-expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_059_967, 2)
+expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_095_873, 2)
 expect_close("卖出场景 第5年末已售", 1 if r_sale.rows[4].buy_sold else 0, 1, 0)
 
 # 7. 回赠 >1%（金管局规则 + 市场实务）：回赠按原贷款额计，整笔回赠从贷款额扣除，
@@ -132,8 +132,9 @@ expect_close("sell>T 有警告", 1 if any("超过模拟时长" in w for w in r_o
 
 # 11. 提前还款（D9 覆盖）：amount 受 b_flow 约束；罚息+回赠按比例追讨
 # prepay 前余额 = base.rows[0].buy_loan（月循环完全一致，提前还款发生在年末）
+# 显式 prepayment_start_year=1 保持"罚息期内还款"场景（新默认 4 会在第 1 年跳过还款）
 base = simulate(DEFAULT_INPUTS)
-pre = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "annual_prepayment": 500_000}))
+pre = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "annual_prepayment": 500_000, "prepayment_start_year": 1}))
 expect_close("提前还款 amount>0", 1 if pre.rows[0].buy_prepaid > 0 else 0, 1, 0)
 amount = pre.rows[0].buy_prepaid
 expect_close(
@@ -143,6 +144,12 @@ expect_close(
     1,
 )
 expect_close("提前还款 贷款减少", 1 if pre.rows[1].buy_loan < base.rows[1].buy_loan else 0, 1, 0)
+
+# 11b. 提前还款起始年（默认 4 = 罚息期后）：第 1-3 年不还款，第 4 年起年末还款
+pre_def = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "annual_prepayment": 500_000}))
+expect_close("起始年默认 前3年不还", sum(1 for r in pre_def.rows[:3] if r.buy_prepaid > 0), 0, 0)
+expect_close("起始年默认 第4年起还", 1 if pre_def.rows[3].buy_prepaid > 0 else 0, 1, 0)
+expect_close("起始年默认 第4年无罚息", pre_def.rows[3].buy_misc_paid, 0, 1)
 
 # 12. 锁定期内卖出（D10 覆盖）：回赠追讨 2/3 + 罚息 1%×余额
 r_sale2 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 2}))

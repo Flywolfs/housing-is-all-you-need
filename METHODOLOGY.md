@@ -102,6 +102,7 @@ UI 分组与参数一一对应（`src/components/InputPanel.tsx`）。
 | | `cash_rebate_pct` | 0.8 | 现金回赠（占贷款额 %） |
 | | `lock_in_years` / `prepay_penalty_pct` | 3 / 1 | 罚息锁定期 / 罚息率 |
 | | `annual_prepayment` | 0 | 每年年末提前还款额 |
+| | `prepayment_start_year` | 4 | 提前还款起始年（第 Y 年起年末还款；默认 = 默认罚息期结束后，避免误踩罚息） |
 | | `mortgage_link_enabled` | True | Mortgage-Link（上限=贷款 50%，利率=按揭利率） |
 | | `mdi_enabled` / `mdi_marginal_rate_pct` | True / 17 | 居所贷款利息扣税 |
 | 四 持有成本 | `mgmt_fee_monthly` | 1,500 | 管理费/月 |
@@ -357,6 +358,9 @@ b_flow += income_at(y)
         − rent_this_year                             # 自己租房（换房后/卖出后）
         − (sold ? 0 : holding_m)                     # 持有成本（未卖出才付）
         − (renting_out ? let_misc/12 : 0)            # 换约杂费按月摊
+M-link 自动存款（mortgage_link_auto_deposit，默认开）：
+结余 > 0 且 b_link < link_cap 时，min(结余, 剩余额度) 转入 b_link，
+其余进 b_flow（M-link 利率=按揭利率 > 定期利率 → 结余优先填 M-link）
 ```
 
 **D8 居所贷款利息扣税（MDI）**——年末一次性：
@@ -369,7 +373,7 @@ b_flow += min(当年利息总和, 100_000) × mdi_marginal_rate%
 **D9 年末提前还款**（从 `b_flow` 扣，不允许扣成负）：
 
 ```
-amount = min(annual_prepayment, max(b_flow, 0), bal)
+amount = min(annual_prepayment, max(b_flow, 0), bal)   # 仅当 y ≥ prepayment_start_year
 若 y ≤ lock_in_years（罚息期内）：
     cost += amount × prepay_penalty%
     cost += rebate_cash × (amount/bal) × ((lock_in − y + 1)/lock_in)   # 回赠按比例追讨
@@ -480,7 +484,7 @@ buyNW[y] = (sold ? 0 : priceAt[y] − bal) + b_lump + b_link + b_flow + buy_depo
 
 ## 13. 测试锚点与验证方法
 
-两侧测试集（`node scripts/smoke.ts`：58 项断言 / `cd python && python3 test_engine.py`：69 项断言，
+两侧测试集（`node scripts/smoke.ts`：61 项断言 / `cd python && python3 test_engine.py`：72 项断言，
 Python 侧不变量测试逐行断言更多），关键锚点：
 
 | 类别 | 锚点 |
@@ -490,12 +494,12 @@ Python 侧不变量测试逐行断言更多），关键锚点：
 | 不变量 A | 租金=0、全费用=0、零利率、全现金买房 → 每一年 `buyNW − rentNW = 0` |
 | 不变量 B | 上期=首月预付（prepaid=1）、零利率 → `buyNW − rentNW = 12,000×y`（总租金无重复计费） |
 | 按金不变量 | 零利率下 `deposit_months`=2 vs 0 → 每一年 `rentNW` 完全相等（换楼按金重置不改变净资产） |
-| 默认场景 | finalBuy≈4,792,081；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
+| 默认场景 | finalBuy≈4,905,860；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
 | 按金对称 | 买房换房年（第 6 年）buyDeposit=36,000（2×18,000）、签约杂费 22,695（租客 14,540 + 业主 8,155）；卖出次年转租同理 |
 | 按保 | 80% 成数→保费 36,800（4M×0.92%）；90%→97,200（4.5M×2.16%）；非首置封顶 80% |
 | 回赠>1% | 350 万贷款 1.5% 回赠 → 回赠 52,500、贷款 3,447,500、期初 1,886,000 |
 | 高成数回赠基数 | 800 万楼九成按揭 1.3% → 回赠 72,800（=800万×70%×1.3%）、贷款 7,127,200（与经络按揭专栏逐分一致） |
-| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,059,967，第 5 年末 buySold=True |
+| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,095,873，第 5 年末 buySold=True |
 | 锁定期卖出 | 第 2 年卖出（lock_in=3）→ 杂费 = 28,000×2/3 + 基线年末余额×1%，贷款清零，有警告 |
 | 提前还款 | 年末提前还款 → 杂费 = amount×1% + 28,000×amount/基线年末余额，贷款减少 |
 | 边界输入 | sell_year>years → 不崩溃、忽略出售、salePriceDefault=null、有警告 |

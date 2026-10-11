@@ -32,7 +32,9 @@ export const DEFAULT_INPUTS: Inputs = {
   lockInYears: 3,
   prepayPenaltyPct: 1,
   annualPrepayment: 0,
+  prepaymentStartYear: 4, // 默认 = 默认罚息期（3 年）结束后
   mortgageLinkEnabled: true,
+  mortgageLinkAutoDeposit: true,
   mdiEnabled: true,
   mdiMarginalRatePct: 17,
 

@@ -271,7 +271,7 @@ export function simulate(inp: Inputs): SimResult {
         ...(y === 1
           ? ['大额投资年初 = 期初推导结果（见上）；定期结余年初 = $0']
           : ['大额投资年初 = 上年末（见上年"租净资产"）']),
-        `+ 当年利息 ${money(rlInt)} = 年初 × 年利率 ${inp.investmentReturnPct}%（输入）按月复利${lumpAdj !== 0 ? `；换楼按金重置净额 ${money(lumpAdj)}（旧按金退回现金、新按金付出现金，年初调整）` : ''}`,
+        `+ 当年利息 ${money(rlInt)} = 年初 × 年利率 ${inp.investmentReturnPct}%（输入）按月复利${lumpAdj !== 0 ? `；换楼按金重置净额 ${money(lumpAdj)}（旧按金退回与新按金支付视为同日交接，净额年初入池并参与当年复利）` : ''}`,
         `= 年末 ${money(rLump)}`,
         `定期结余：`,
         y === 1 ? `年初 = $0（期初现金全部进大额投资）` : `年初 = 上年末 ${money(rfStart)}`,
@@ -372,6 +372,21 @@ export function simulate(inp: Inputs): SimResult {
 
     // 租客侧费用（与租房方案对称）：进入租房状态年付按金（现金→资产）+中介费+租约印花税+搬迁费；
     // 之后每 cycle 年续约付中介费+印花税。上期（首月预付）的时点效应忽略，月租照付（见文档 §10）
+    let yearMortgage = 0
+    let yearInterest = 0
+    // 资金池演变追踪（供计算面板）：年初余额必须在任何年内扣款之前捕获，
+    // 否则扣款会被静默吸收进"年初"导致面板加总不平
+    const lumpStart = bLump
+    const linkStart = bLink
+    const flowStart = bFlow
+    let lumpInt = 0
+    let linkInt = 0
+    let flowInt = 0
+    let linkAutoIn = 0
+
+    // 租客侧费用（与租房方案对称）：进入租房状态年付按金（现金→资产）+中介费+租约印花税+搬迁费；
+    // 之后每 cycle 年续约付中介费+印花税。扣款发生在月循环前 → 当年计息基数已刨除这些款项。
+    // 上期（首月预付）的时点效应忽略，月租照付（见文档 §10）
     let rentalFeesAgent = 0
     let rentalFeesStamp = 0
     let rentalFeesMoving = 0
@@ -388,16 +403,6 @@ export function simulate(inp: Inputs): SimResult {
       bFlow -= rentalFeesAgent + rentalFeesStamp
     }
     const rentalFees = rentalFeesAgent + rentalFeesStamp + rentalFeesMoving
-
-    let yearMortgage = 0
-    let yearInterest = 0
-    // 资金池演变追踪（供悬浮说明）：年初余额、当年利息、月度结余、溢出
-    const lumpStart = bLump
-    const linkStart = bLink
-    const flowStart = bFlow
-    let lumpInt = 0
-    let linkInt = 0
-    let flowInt = 0
     let yearSurplus = 0
     let overflow = 0
 
@@ -433,7 +438,15 @@ export function simulate(inp: Inputs): SimResult {
         inp.livingExpenseMonthly + pay + rentThisYear + (sold ? 0 : holdingM) + (rentingOut ? letMisc / MONTHS_PER_YEAR : 0)
       const surplus = inflow - outflow
       yearSurplus += surplus
-      bFlow += surplus
+      // M-Link 自动存款：结余（正数部分）优先存入 M-Link 至上限（利率=按揭利率 > 定期利率），超出进定期
+      if (inp.mortgageLinkAutoDeposit && !sold && surplus > 0 && bLink < linkCap) {
+        const toLink = Math.min(surplus, linkCap - bLink)
+        bLink += toLink
+        linkAutoIn += toLink
+        bFlow += surplus - toLink
+      } else {
+        bFlow += surplus
+      }
     }
 
     // 年内大额池进出
@@ -452,7 +465,7 @@ export function simulate(inp: Inputs): SimResult {
     // 年末提前还款（从定期结余扣款）
     let yearPrepaid = 0
     let prepayCost = 0
-    if (!sold && inp.annualPrepayment > 0 && bal > 0.005) {
+    if (!sold && inp.annualPrepayment > 0 && y >= inp.prepaymentStartYear && bal > 0.005) {
       const amount = Math.min(inp.annualPrepayment, Math.max(bFlow, 0), bal)
       if (amount > 0) {
         let cost = amount
@@ -587,18 +600,33 @@ export function simulate(inp: Inputs): SimResult {
     ]
     const flowFlowParts = [
       `年初 ${money(flowStart)}`,
+      ...(enteredThisYear ? [`− 按金 ${money(buyDeposit)}`] : []),
+      ...(rentalFees > 0 ? [`− 签约/换约费 ${money(rentalFees)}`] : []),
       `+ 利息 ${money(flowInt)}`,
-      `+ 月度结余 ${money(yearSurplus)}`,
+      `+ 月度结余（净入定期）${money(yearSurplus - linkAutoIn)}`,
       ...(mdiIn > 0 ? [`+ 扣税返还 ${money(mdiIn)}`] : []),
       ...(prepayCost > 0 ? [`− 提前还款 ${money(prepayCost)}`] : []),
-      ...(rentalFees > 0 ? [`− 签约/换约费 ${money(rentalFees)}`] : []),
     ]
     const flowLines = [
       ...(y === 1
         ? [`年初 = $0（期初现金扣除买房支出后全部归入大额投资/M-link，定期结余从零开始）`]
         : [`年初 = 上年末 ${money(flowStart)}（见第 ${y - 1} 年"净资产"）`]),
-      `+ 当年利息 ${money(flowInt)} = 年利率 ${inp.depositRatePct}%（输入）按月复利：每月对月初余额 × 月利率（年利率/12），逐月累加；因各月余额逐月增长，全年利息介于"年初×年利率"与"年末×年利率"之间`,
-      `+ 月度结余 ${money(yearSurplus)} = 12 个月"收入 − 支出"之和：`,
+      ...(enteredThisYear
+        ? [
+            `− 租房按金 ${money(buyDeposit)}（年初扣，现金→资产，见"按金资产"列；退租可回收，不计息；当年计息基数已刨除这笔钱）`,
+          ]
+        : []),
+      ...(rentalFees > 0
+        ? enteredThisYear
+          ? [
+              `− 租房签约费 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)} + 搬迁 ${money(rentalFeesMoving)}（年初扣；当年计息基数已刨除）`,
+            ]
+          : [`− 换约费用 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)}（年初扣）`]
+        : []),
+      `+ 当年利息 ${money(flowInt)} = 年利率 ${inp.depositRatePct}%（输入）按月复利：每月对月初余额 × 月利率（年利率/12），逐月累加`,
+      ...(linkAutoIn > 0
+        ? [`+ 月度结余（净入定期）${money(yearSurplus - linkAutoIn)} = 总结余 ${money(yearSurplus)} − 自动转入 M-link ${money(linkAutoIn)}；总结余的收支分解：`]
+        : [`+ 月度结余 ${money(yearSurplus)} = 12 个月"收入 − 支出"之和：`]),
       ...surplusLines.map((l) => `    ${l}`),
       ...(mdiIn > 0
         ? [
@@ -608,13 +636,6 @@ export function simulate(inp: Inputs): SimResult {
         : []),
       ...(prepayCost > 0
         ? [`− 提前还款 ${money(yearPrepaid)}（年末从结余扣，含罚息/回赠追讨 ${money(prepayCost - yearPrepaid)}）`]
-        : []),
-      ...(rentalFees > 0
-        ? enteredThisYear
-          ? [
-              `− 租房签约费 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)} + 搬迁 ${money(rentalFeesMoving)}（年初扣；另付按金 ${money(buyDeposit)} 转为资产，见"按金资产"列）`,
-            ]
-          : [`− 换约费用 ${money(rentalFees)} = 中介 ${money(rentalFeesAgent)} + 租约印花税 ${money(rentalFeesStamp)}（年初扣）`]
         : []),
       `= 年末 ${money(bFlow)}（${flowFlowParts.join(' ')}）`,
     ]
@@ -639,9 +660,12 @@ export function simulate(inp: Inputs): SimResult {
     ]
     const linkLines = [
       ...(y === 1 ? [`M-link 期初 = ${money(linkStart)}（期初剩余现金全部转入；存款利率 = 按揭利率，冲抵利息）`] : [`M-link 年初 = 上年末 ${money(linkStart)}`]),
-      `M-link ${money(bLink)} = 年初 ${money(linkStart)} + 当年利息 ${money(linkInt)}（年利率 = 当年按揭利率 ${pct(rM * 12)}，按月复利）`,
-      ...(overflow > 0 ? [`超上限 ${money(linkCap)} 的部分溢出至大额投资 ${money(overflow)}`] : []),
-      `= 年末 ${money(bLink)}`,
+      `+ 当年利息 ${money(linkInt)} = 年利率 = 当年按揭利率 ${pct(rM * 12)}，按月复利`,
+      ...(linkAutoIn > 0
+        ? [`+ 每月结余自动转入 ${money(linkAutoIn)}（M-link 利率 > 定期利率，结余优先存入至上限 ${money(linkCap)}）`]
+        : []),
+      ...(overflow > 0 ? [`− 超 ${money(linkCap)} 的部分溢出至大额投资 ${money(overflow)}`] : []),
+      `= 年末 ${money(bLink)}（年初 ${money(linkStart)} + 利息 ${money(linkInt)}${linkAutoIn > 0 ? ` + 结余转入 ${money(linkAutoIn)}` : ''}${overflow > 0 ? ` − 溢出 ${money(overflow)}` : ''}）`,
     ]
     const depositLine =
       buyDeposit > 0

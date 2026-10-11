@@ -34,16 +34,9 @@ export default function App() {
   }, [inputs])
 
   const set = <K extends keyof Inputs>(key: K, value: Inputs[K]) => {
-    setInputs((prev) => {
-      const next = { ...prev, [key]: value }
-      // 联动钳制：模拟时长缩短时，出售/换房年份不能超出时长
-      if (key === 'years') {
-        const t = next.years
-        if (next.sellYear !== null && next.sellYear > t) next.sellYear = t
-        if (next.switchYear > t) next.switchYear = t
-      }
-      return next
-    })
+    setInputs((prev) => ({ ...prev, [key]: value }))
+    // 注：不按模拟时长钳制 switchYear/sellYear——引擎对 N>T（全程自住）和 S>T（忽略出售+警告）
+    // 均安全，保留用户原值；缩短时长后调回时设置不丢失
   }
 
   const result = useMemo(() => simulate(inputs), [inputs])

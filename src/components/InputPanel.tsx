@@ -21,6 +21,10 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
   const sellYearOptions = [
     { value: 0, label: '不出售（持有到期末）' },
     ...Array.from({ length: T }, (_, i) => ({ value: i + 1, label: `第 ${i + 1} 年末出售` })),
+    // 保留超出时长的历史选择（引擎会忽略并警告），避免下拉显示空值
+    ...(inputs.sellYear !== null && inputs.sellYear > T
+      ? [{ value: inputs.sellYear, label: `第 ${inputs.sellYear} 年末出售（超出模拟时长，已忽略）` }]
+      : []),
   ]
 
   return (
@@ -132,9 +136,12 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
           <NumberField label="提前还款罚息" value={inputs.prepayPenaltyPct} suffix="%" step={0.5}
             onChange={(v) => set('prepayPenaltyPct', v)} />
           <MoneyField label="每年提前还款" value={inputs.annualPrepayment} onChange={(v) => set('annualPrepayment', v)} />
+          <NumberField label="提前还款起始年" value={inputs.prepaymentStartYear} suffix="年起（年末执行）"
+            onChange={(v) => set('prepaymentStartYear', Math.min(T, Math.max(1, Math.round(v || 1))))} />
         </div>
         <div className="field-row">
           <ToggleField label="Mortgage-Link（上限 50% 贷款额）" value={inputs.mortgageLinkEnabled} onChange={(v) => set('mortgageLinkEnabled', v)} />
+          <ToggleField label="每月结余自动存入 M-Link" value={inputs.mortgageLinkAutoDeposit} onChange={(v) => set('mortgageLinkAutoDeposit', v)} />
         </div>
         <div className="field-row">
           <ToggleField label="居所贷款利息扣税（自住期）" value={inputs.mdiEnabled} onChange={(v) => set('mdiEnabled', v)} />

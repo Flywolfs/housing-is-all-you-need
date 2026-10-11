@@ -100,7 +100,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 {
   const r = simulate({ ...DEFAULT_INPUTS, sellYear: 5, salePriceOverride: 4_000_000 })
   expectTrue('卖出场景 第5年末已售', r.rows[4].buySold)
-  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_059_967, 2)
+  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_095_873, 2)
   expectTrue('卖出后转租有按金', r.rows[5].buyDeposit === 36_000) // 卖出次年恰逢 N=6 → 租大房：2×18,000
   console.log('\n=== 第5年以$4M卖出（跌20%）===')
   console.log('final buy:', Math.round(r.derived.finalBuy), 'final rent:', Math.round(r.derived.finalRent))
@@ -168,13 +168,20 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 }
 
 // 10. 提前还款（D9 覆盖）：罚息 + 回赠按比例追讨；prepay 前余额 = 基线年末余额
+// 显式 prepaymentStartYear=1 保持"罚息期内还款"场景（新默认 4 会在第 1 年跳过还款）
 {
   const base = simulate(DEFAULT_INPUTS)
-  const pre = simulate({ ...DEFAULT_INPUTS, annualPrepayment: 500_000 })
+  const pre = simulate({ ...DEFAULT_INPUTS, annualPrepayment: 500_000, prepaymentStartYear: 1 })
   expectTrue('提前还款 amount>0', pre.rows[0].buyPrepaid > 0)
   const amount = pre.rows[0].buyPrepaid
   expectClose('提前还款 罚息+按比例追讨', pre.rows[0].buyMiscPaid, amount * 0.01 + 28_000 * (amount / base.rows[0].buyLoan), 1)
   expectTrue('提前还款 贷款减少', pre.rows[1].buyLoan < base.rows[1].buyLoan)
+
+  // 10b. 起始年默认 4（罚息期后）：第 1-3 年不还款，第 4 年起无罚息
+  const preDef = simulate({ ...DEFAULT_INPUTS, annualPrepayment: 500_000 })
+  expectTrue('起始年默认 前3年不还', preDef.rows.slice(0, 3).every((r) => r.buyPrepaid === 0))
+  expectTrue('起始年默认 第4年起还', preDef.rows[3].buyPrepaid > 0)
+  expectClose('起始年默认 第4年无罚息', preDef.rows[3].buyMiscPaid, 0, 1)
 }
 
 // 11. 锁定期内卖出（D10 覆盖）：回赠追讨 2/3 + 罚息 1%×余额

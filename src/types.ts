@@ -27,7 +27,9 @@ export interface Inputs {
   lockInYears: number // 罚息 / 回赠锁定期（年）
   prepayPenaltyPct: number // 提前还款罚息（%）
   annualPrepayment: number // 每年提前还款额（年末，$）
+  prepaymentStartYear: number // 提前还款起始年（第 Y 年起年末还款；之前年份不还，避免误踩罚息期）
   mortgageLinkEnabled: boolean // Mortgage-Link 存款账户（上限 = 贷款额 50%）
+  mortgageLinkAutoDeposit: boolean // 每月结余自动优先存入 M-Link（至上限，超出进定期）
   mdiEnabled: boolean // 居所贷款利息扣除（自住期间）
   mdiMarginalRatePct: number // 薪俸税边际税率（%）
 
