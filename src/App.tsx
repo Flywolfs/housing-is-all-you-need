@@ -6,6 +6,7 @@ import { InputPanel } from './components/InputPanel.tsx'
 import { Summary } from './components/Summary.tsx'
 import { ResultChart } from './components/ResultChart.tsx'
 import { DetailTable } from './components/DetailTable.tsx'
+import { SensitivityPanel } from './components/SensitivityPanel.tsx'
 
 const STORAGE_KEY = 'hk-rv-inputs-v1'
 
@@ -61,6 +62,7 @@ export default function App() {
             <h2>逐年明细</h2>
             <DetailTable rows={result.rows} />
           </div>
+          <SensitivityPanel inputs={inputs} />
         </section>
       </main>
     </div>

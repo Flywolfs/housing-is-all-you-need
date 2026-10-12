@@ -38,7 +38,7 @@ function annuityPayment(balance: number, monthlyRate: number, months: number): n
   return (balance * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -months))
 }
 
-export function simulate(inp: Inputs): SimResult {
+export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult {
   const warnings: string[] = []
   const T = Math.max(1, Math.round(inp.years))
 
@@ -240,6 +240,7 @@ export function simulate(inp: Inputs): SimResult {
     rentPaidAt.push(yearPaid)
     rentMiscAt.push(misc)
     rentNW.push(rLump + rFlow + deposit)
+    if (!opts?.skipNotes) {
     rentNotes.push({
       rentPaid:
         skippedThisYear > 0
@@ -292,6 +293,7 @@ export function simulate(inp: Inputs): SimResult {
         .filter((l) => l !== '')
         .join('\n'),
     })
+    }
   }
 
   // ---------- 买房方案模拟 ----------
@@ -519,6 +521,8 @@ export function simulate(inp: Inputs): SimResult {
     buyNW.push(yearNW)
 
     // ---- 计算面板说明（展示层）：逐行原子化，数字拆到输入项或单一步骤 ----
+    // 扫描等批量场景传 skipNotes 跳过（字符串模板是模拟的主要开销）
+    if (!opts?.skipNotes) {
     const note: Record<string, string> = {}
     note.price =
       y === 1
@@ -701,6 +705,7 @@ export function simulate(inp: Inputs): SimResult {
       note.diff = `买房净资产 ${money(yearNW)} − 租房净资产 ${money(rentNW[y - 1])} = ${money(yearNW - rentNW[y - 1])}`
     }
     buyNotes.push(note)
+    }
   }
 
   // ---------- 汇总 ----------
