@@ -161,8 +161,11 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
     for (let y = 1 + cycle; y <= T; y += cycle) tenantRenewalYears.add(y)
   }
 
+  // 纯粹对比模式：手头现金自动等于期初总支出（同一笔刚好够买房的钱，买 vs 租）
+  const initialCash = inp.cashFollowUpfront ? upfrontBuy : inp.initialCash
+
   // ---------- 租房方案模拟 ----------
-  let rLump = inp.initialCash
+  let rLump = initialCash
   let rFlow = 0
   let deposit = inp.depositMonths * inp.rent1Monthly
   // 上期 = 首月租金提前支付（押二付一），覆盖第 1 个月的租金，非额外成本；
@@ -260,7 +263,7 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
         ...(y === 1
           ? [
               '【期初推导（第 0 年，签约时一次性支付）】',
-              `手头现金 ${money(inp.initialCash)}`,
+              `手头现金 ${money(initialCash)}`,
               `− 按金 ${money(inp.depositMonths * inp.rent1Monthly)}（= ${inp.depositMonths} 个月 × 月租 ${money(inp.rent1Monthly)}，可回收资产）`,
               `− 上期 ${money(inp.prepaidMonths * inp.rent1Monthly)}（= ${inp.prepaidMonths} 个月 × 月租，即首月租金预付）`,
               `− 中介费 ${money(inp.tenantAgentFeeMonths * inp.rent1Monthly)}（= 月租 × ${inp.tenantAgentFeeMonths} 个月）`,
@@ -298,7 +301,7 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
 
   // ---------- 买房方案模拟 ----------
   const linkCap = inp.mortgageLinkEnabled ? loanAmount * 0.5 : 0
-  let bLump = inp.initialCash - upfrontBuy
+  let bLump = initialCash - upfrontBuy
   bLump += rebateCash // 现金回赠于交易完成后数周到账（模型视为第 0 月）
   let bLink = Math.min(Math.max(bLump, 0), linkCap)
   bLump -= bLink
@@ -646,7 +649,7 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
     const lumpLines = [
       ...(y === 1
         ? [
-            `期初（第 0 年）= 手头现金 ${money(inp.initialCash)} − 期初总支出 ${money(upfrontBuy)} + 回赠现金 ${money(rebateCash)} = ${money(lumpStart)}，其中：`,
+            `期初（第 0 年）= 手头现金 ${money(initialCash)} − 期初总支出 ${money(upfrontBuy)} + 回赠现金 ${money(rebateCash)} = ${money(lumpStart)}，其中：`,
             `  期初总支出 = 首付 ${money(inp.propertyPrice - loanAmount)} + 印花税 ${money(stampDuty)} + 佣金 ${money((inp.propertyPrice * inp.agencyFeePct) / 100)} + 律师费 ${money(inp.legalFeeBuy + inp.legalFeeMortgage)} + 杂费 ${money(inp.miscFees)} + 按保费 ${money(mipPremium)} + 装修 ${money(inp.renovation)}`,
             `  印花税按税表（楼价 ${money(inp.propertyPrice)}）；佣金 = 楼价 × ${inp.agencyFeePct}%`,
             `  期初现金先填 M-link（上限 = 贷款 ${money(loanAmount)} × 50% = ${money(linkCap)}，利率更高），装不下的才进大额投资`,
@@ -682,7 +685,7 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
       ...(y === 1 ? ['【期初推导（第 0 年，交易完成时）】'] : []),
       ...(y === 1
         ? [
-            `手头现金 ${money(inp.initialCash)}（输入）`,
+            `手头现金 ${money(initialCash)}（输入）`,
             `− 期初总支出 ${money(upfrontBuy)}（逐项见下）`,
             `  首付 = 楼价 ${money(inp.propertyPrice)} − 实际贷款 ${money(loanAmount)} = ${money(inp.propertyPrice - loanAmount)}`,
             `  印花税 ${money(stampDuty)}（按税表，楼价 ${money(inp.propertyPrice)}）`,
@@ -737,8 +740,8 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
     })
   }
 
-  const finalBuy = buyNW[T - 1] ?? inp.initialCash
-  const finalRent = rentNW[T - 1] ?? inp.initialCash
+  const finalBuy = buyNW[T - 1] ?? initialCash
+  const finalRent = rentNW[T - 1] ?? initialCash
   let breakEvenYear: number | null = null
   for (let y = 0; y < T; y++) {
     if (buyNW[y] > rentNW[y]) {
@@ -749,8 +752,8 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
 
   const dsrPct = inp.monthlyIncome > 0 ? (monthlyPayment0 / inp.monthlyIncome) * 100 : 0
   if (dsrPct > 50) warnings.push(`首年月供占收入 ${dsrPct.toFixed(0)}%，超过银行 DSR 50% 指引，实际可能批不了贷款。`)
-  if (upfrontBuy > inp.initialCash) {
-    warnings.push(`期初所需资金 $${Math.round(upfrontBuy).toLocaleString()} 超过手头现金 $${inp.initialCash.toLocaleString()}，现金将为负数。`)
+  if (upfrontBuy > initialCash) {
+    warnings.push(`期初所需资金 $${Math.round(upfrontBuy).toLocaleString()} 超过手头现金 $${initialCash.toLocaleString()}，现金将为负数。`)
   }
   if (S && N > 0 && S < N && inp.rentOutEnabled) {
     warnings.push('出售年份早于出租起始年，该单位从未出租过。')

@@ -8,6 +8,7 @@ export interface Inputs {
   sellYear: number | null // 第几年出售（null = 不出售）
   salePriceOverride: number | null // 手动出售价（null = 按曲线推算）
   initialCash: number // 手头现金（第 0 年）
+  cashFollowUpfront: boolean // 手头现金自动 = 期初总支出（纯粹对比：同一笔刚好够买房的钱，买 vs 租）
 
   // 二、买房 · 交易成本（期初一次性）
   downPaymentPct: number // 首付比例（%）

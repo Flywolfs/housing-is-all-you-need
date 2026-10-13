@@ -151,6 +151,19 @@ expect_close("起始年默认 前3年不还", sum(1 for r in pre_def.rows[:3] if
 expect_close("起始年默认 第4年起还", 1 if pre_def.rows[3].buy_prepaid > 0 else 0, 1, 0)
 expect_close("起始年默认 第4年无罚息", pre_def.rows[3].buy_misc_paid, 0, 1)
 
+# 11c. 现金 = 期初总支出（纯粹对比模式）：买房方案期初现金花光，只剩回赠现金（进 M-link）
+# 隔离 M-link 自动存款（结余也会转入）后验证：link 池 = 回赠复利、lump = 0
+pure = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "cash_follow_upfront": True}))
+pure_iso = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "cash_follow_upfront": True, "mortgage_link_auto_deposit": False}))
+expect_close(
+    "纯粹对比 买房期初只剩回赠（M-link）",
+    pure_iso.rows[0].buy_link,
+    28_000 * (1 + 0.035 / 12) ** 12,
+    60,
+)
+expect_close("纯粹对比 买房大额池为0", pure.rows[0].buy_lump, 0, 1)
+expect_close("纯粹对比 租房全额持有", 1 if pure.rows[0].rent_lump > 1_500_000 else 0, 1, 0)
+
 # 12. 锁定期内卖出（D10 覆盖）：回赠追讨 2/3 + 罚息 1%×余额
 r_sale2 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 2}))
 bal_before = base.rows[1].buy_loan

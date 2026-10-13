@@ -38,9 +38,20 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
         <div className="field-row">
           <MoneyField
             label="手头现金（第 0 年）"
-            value={inputs.initialCash}
+            value={inputs.cashFollowUpfront ? Math.round(derived.upfrontBuy) : inputs.initialCash}
+            disabled={inputs.cashFollowUpfront}
             onChange={(v) => set('initialCash', v)}
-            hint={`期初总支出约 ${fmtMoney(derived.upfrontBuy)}（首付+税费+佣金+律师+按保+装修）`}
+            hint={
+              inputs.cashFollowUpfront
+                ? '已锁定 = 期初总支出（纯粹对比：同一笔刚好够买房的钱）'
+                : `期初总支出约 ${fmtMoney(derived.upfrontBuy)}（首付+税费+佣金+律师+按保+装修）`
+            }
+          />
+          <ToggleField
+            label="现金 = 期初总支出"
+            value={inputs.cashFollowUpfront}
+            onChange={(v) => set('cashFollowUpfront', v)}
+            hint="开启后手头现金自动等于买房期初总支出：同一笔钱，买房 vs 一直租房"
           />
         </div>
         <div className="field-block">

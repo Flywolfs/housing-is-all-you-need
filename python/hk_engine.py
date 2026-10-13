@@ -153,6 +153,7 @@ class Inputs:
     sell_year: Optional[int] = None        # 第几年末出售（None = 不出售）
     sale_price_override: Optional[float] = None  # 手动出售价（None = 按曲线推算）
     initial_cash: float = 2_000_000        # 手头现金（第 0 年）
+    cash_follow_upfront: bool = False      # 手头现金自动 = 期初总支出（纯粹对比：同一笔刚好够买房的钱，买 vs 租）
 
     # ---- 二、买房 · 交易成本（期初一次性） ----
     down_payment_pct: float = 30           # 首付比例 %
@@ -438,7 +439,10 @@ def simulate(inp: Inputs) -> SimResult:
             y += cycle
 
     # ---------- 租房方案模拟 ----------
-    r_lump = inp.initial_cash
+    # 纯粹对比模式：手头现金自动等于期初总支出（同一笔刚好够买房的钱，买 vs 租）
+    initial_cash = upfront_buy if inp.cash_follow_upfront else inp.initial_cash
+
+    r_lump = initial_cash
     r_flow = 0.0
     deposit = inp.deposit_months * inp.rent1_monthly
     # 上期 = 首月租金提前支付（押二付一），覆盖第 1 个月的租金，非额外成本；
@@ -484,7 +488,7 @@ def simulate(inp: Inputs) -> SimResult:
 
     # ---------- 买房方案模拟 ----------
     link_cap = loan_amount * 0.5 if inp.mortgage_link_enabled else 0.0
-    b_lump = inp.initial_cash - upfront_buy
+    b_lump = initial_cash - upfront_buy
     b_lump += rebate_cash  # 现金回赠于交易完成后数周到账（模型视为第 0 月）
     b_link = min(max(b_lump, 0.0), link_cap)
     b_lump -= b_link
@@ -677,16 +681,16 @@ def simulate(inp: Inputs) -> SimResult:
         for y in range(1, T + 1)
     ]
 
-    final_buy = buy_nw[T - 1] if buy_nw else inp.initial_cash
-    final_rent = rent_nw[T - 1] if rent_nw else inp.initial_cash
+    final_buy = buy_nw[T - 1] if buy_nw else initial_cash
+    final_rent = rent_nw[T - 1] if rent_nw else initial_cash
     break_even_year = next((y for y in range(1, T + 1) if buy_nw[y - 1] > rent_nw[y - 1]), None)
 
     dsr_pct = monthly_payment_0 / inp.monthly_income * 100 if inp.monthly_income > 0 else 0.0
     if dsr_pct > 50:
         warnings.append(f"首年月供占收入 {dsr_pct:.0f}%，超过银行 DSR 50% 指引，实际可能批不了贷款。")
-    if upfront_buy > inp.initial_cash:
+    if upfront_buy > initial_cash:
         warnings.append(
-            f"期初所需资金 ${upfront_buy:,.0f} 超过手头现金 ${inp.initial_cash:,.0f}，现金将为负数。"
+            f"期初所需资金 ${upfront_buy:,.0f} 超过手头现金 ${initial_cash:,.0f}，现金将为负数。"
         )
     if S and N > 0 and S < N and inp.rent_out_enabled:
         warnings.append("出售年份早于出租起始年，该单位从未出租过。")

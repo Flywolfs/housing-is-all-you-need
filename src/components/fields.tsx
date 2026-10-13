@@ -10,11 +10,13 @@ export function DraftNumberInput({
   onCommit,
   step,
   className,
+  disabled,
 }: {
   value: number
   onCommit: (v: number) => void
   step?: number | string
   className?: string
+  disabled?: boolean
 }) {
   const [draft, setDraft] = useState<string | null>(null)
   return (
@@ -22,6 +24,7 @@ export function DraftNumberInput({
       type="number"
       step={step}
       className={className}
+      disabled={disabled}
       value={draft ?? (Number.isFinite(value) ? String(value) : '0')}
       onChange={(e) => {
         const v = e.target.value
@@ -48,14 +51,15 @@ interface Props {
   suffix?: string
   step?: number
   hint?: string
+  disabled?: boolean
 }
 
-export function NumberField({ label, value, onChange, suffix, step = 1, hint }: Props) {
+export function NumberField({ label, value, onChange, suffix, step = 1, hint, disabled }: Props) {
   return (
     <label className="field">
       <span className="field-label">{label}</span>
       <span className="field-input">
-        <DraftNumberInput value={value} onCommit={onChange} step={step} />
+        <DraftNumberInput value={value} onCommit={onChange} step={step} disabled={disabled} />
         {suffix ? <em>{suffix}</em> : null}
       </span>
       {hint ? <span className="field-hint">{hint}</span> : null}

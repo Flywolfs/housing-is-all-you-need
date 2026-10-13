@@ -13,6 +13,7 @@ export const DEFAULT_INPUTS: Inputs = {
   sellYear: null,
   salePriceOverride: null,
   initialCash: 2_000_000,
+  cashFollowUpfront: false,
 
   // 二、交易成本
   downPaymentPct: 30,
