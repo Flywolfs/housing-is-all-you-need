@@ -25,7 +25,8 @@ expect_close("SD 10M", stamp_duty_residential(10_000_000), 370_000)  # 9M-10.08M
 expect_close("SD 21,739,121", stamp_duty_residential(21_739_121), round(21_739_121 * 0.0425))
 
 # 2. 首年月供：$3.5M @3.5% 30年 ≈ $15,716.57
-r = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "switch_year": 0, "rent_out_enabled": False, "mdi_enabled": False}))
+r = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "switch_year": 0, "rent_out_enabled": False, "mdi_enabled": False,
+                        "mortgage_rates": [3.5] * 30, "cash_rebate_pct": 0.8}))
 expect_close("首年月供 3.5M@3.5%/30y", r.derived.monthly_payment_0, 15_716.57, 1)
 
 # 3. 不变量：租金=0、无任何费用、零利率时，两方案净资产完全相等（同一起点现金）
@@ -58,6 +59,7 @@ zero_all = dict(
     mdi_enabled=False,
     mortgage_link_enabled=False,
     cash_rebate_pct=0,
+    rent_deduction_enabled=False,
 )
 r_a = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, **zero_all}))
 for row in r_a.rows:
@@ -69,39 +71,42 @@ for row in r_b.rows:
     expect_close(f"不变量B@第{row.year}年", row.buy_net_worth - row.rent_net_worth, 1_000 * 12 * row.year, 2)
 
 # 4. 与 TS 版对照的关键数字（scripts/smoke.ts 同款场景）
+#    含住宅租金税项扣除：租房方案每年 min(实付租金, 10万)×17% = 17,000 年末入池
 r_default = simulate(DEFAULT_INPUTS)
-expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_905_860, 1)
-expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_811_897, 1)
-expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -906_036, 1)
+expect_close("默认场景 finalBuy", r_default.derived.final_buy, 4_957_655, 1)
+expect_close("默认场景 finalRent", r_default.derived.final_rent, 5_675_907, 1)
+expect_close("默认场景 第10年差额", r_default.rows[-1].buy_net_worth - r_default.rows[-1].rent_net_worth, -718_252, 1)
 expect_close("默认场景 印花税", r_default.derived.stamp_duty, 112_500, 0)
-expect_close("默认场景 期初总支出", r_default.derived.upfront_buy, 1_833_500, 1)  # 完成日实付；0.8%回赠 28,000 完成后才到账
+expect_close("默认场景 期初总支出", r_default.derived.upfront_buy, 1_745_500, 1)  # 完成日实付；1.2%回赠 42,000 完成后才到账
 
 # 4b. 买房方案换房后的按金对称性：第 6 年租大房付按金 2×18,000 + 签约费（中介+印花+搬迁）
 expect_close("换房年按金 36,000", r_default.rows[5].buy_deposit, 36_000, 1)
 expect_close("换房年签约杂费", r_default.rows[5].buy_misc_paid, 14_540 + 8_155, 1)  # 租客签约 14,540 + 业主换约 8,155
 
-# 5. 按保：80% 成数 → 4M×0.92% = $36,800；90% 成数 → 4.5M×2.16% = $97,200
+# 5. 按保：80% 成数：名义 4M×0.92% = 36,800，回赠 1.2%（基数=楼价七成 2.8M）→ 42,000 扣减后
+#    实际放款 3,958,000，保费按放款缩放 → 3,958,000×0.92% = 36,413.60；
+#    90% 场景：回赠 3.5M×1.2%=42,000 ≤ 1%×4.5M=45,000 → 不触发扣减，保费 = 4.5M×2.16% = 97,200
 r_mip80 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "down_payment_pct": 20}))
-expect_close("MIP 80% LTV", r_mip80.derived.mip_premium, 36_800, 1)
+expect_close("MIP 80% LTV", r_mip80.derived.mip_premium, 3_958_000 * 0.0092, 1)
 r_mip90 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "down_payment_pct": 10}))
 expect_close("MIP 90% LTV", r_mip90.derived.mip_premium, 97_200, 1)
 
-# 6. 高成数非首置：封顶 80%
+# 6. 高成数非首置：封顶 80%（回赠扣减后实际 LTV 79.16%）
 r_nonfirst = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "down_payment_pct": 10, "is_first_time_buyer": False}))
-expect_close("非首置 LTV 封顶 80", r_nonfirst.derived.ltv_pct, 80, 0.1)
+expect_close("非首置 LTV 封顶 80", r_nonfirst.derived.ltv_pct, 79.16, 0.1)
 
 # 7. 第5年以$4M卖出（跌20%，锁定期外无罚息）
 r_sale = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 5, "sale_price_override": 4_000_000}))
-expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_095_873, 2)
+expect_close("卖出场景 finalBuy", r_sale.derived.final_buy, 4_114_609, 2)
 expect_close("卖出场景 第5年末已售", 1 if r_sale.rows[4].buy_sold else 0, 1, 0)
 
 # 7. 回赠 >1%（金管局规则 + 市场实务）：回赠按原贷款额计，整笔回赠从贷款额扣除，
 #    完成交易后整笔回赠以现金发放（模型视为第 0 月到账）
 # 贷款 350万 → 回赠 = 350万×1.5% = 52,500 → 实际批出贷款额 = 3,447,500
-# 期初 = 5,000,000 − 3,447,500 + 印花税112,500 + 佣金50,000 + 律师18,000 + 杂费3,000 + 装修150,000 = 1,886,000
+# 期初 = 5,000,000 − 3,447,500 + 印花税112,500 + 佣金50,000 + 律师18,000 + 杂费3,000 + 装修20,000 = 1,756,000
 r_rebate = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "cash_rebate_pct": 1.5}))
 expect_close("回赠超标 贷款额已调低", r_rebate.derived.loan_amount, 3_447_500, 1)
-expect_close("回赠超标 期初总支出", r_rebate.derived.upfront_buy, 1_886_000, 1)
+expect_close("回赠超标 期初总支出", r_rebate.derived.upfront_buy, 1_756_000, 1)
 expect_close("回赠超标 现金回赠全额", r_rebate.derived.rebate_amount, 52_500, 1)
 
 # 7b. 高成数按保的回赠基数 = 楼价七成（经络按揭曹德明 2026-06 例子）：
@@ -140,7 +145,7 @@ amount = pre.rows[0].buy_prepaid
 expect_close(
     "提前还款 罚息+按比例追讨",
     pre.rows[0].buy_misc_paid,
-    amount * 0.01 + 28_000 * (amount / base.rows[0].buy_loan),
+    amount * 0.01 + 42_000 * (amount / base.rows[0].buy_loan),
     1,
 )
 expect_close("提前还款 贷款减少", 1 if pre.rows[1].buy_loan < base.rows[1].buy_loan else 0, 1, 0)
@@ -158,7 +163,7 @@ pure_iso = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "cash_follow_upfront": 
 expect_close(
     "纯粹对比 买房期初只剩回赠（M-link）",
     pure_iso.rows[0].buy_link,
-    28_000 * (1 + 0.035 / 12) ** 12,
+    42_000 * (1 + 0.03 / 12) ** 12,
     60,
 )
 expect_close("纯粹对比 买房大额池为0", pure.rows[0].buy_lump, 0, 1)
@@ -168,7 +173,7 @@ expect_close("纯粹对比 租房全额持有", 1 if pure.rows[0].rent_lump > 1_
 r_sale2 = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "sell_year": 2}))
 bal_before = base.rows[1].buy_loan
 expect_close("锁定期卖出 已售", 1 if r_sale2.rows[1].buy_sold else 0, 1, 0)
-expect_close("锁定期卖出 追讨+罚息", r_sale2.rows[1].buy_misc_paid, 28_000 * 2 / 3 + bal_before * 0.01, 1)
+expect_close("锁定期卖出 追讨+罚息", r_sale2.rows[1].buy_misc_paid, (42_000 * 2) / 3 + bal_before * 0.01, 1)
 expect_close("锁定期卖出 贷款清零", r_sale2.rows[1].buy_loan, 0, 0.01)
 expect_close("锁定期卖出 有警告", 1 if any("罚息锁定期" in w for w in r_sale2.warnings) else 0, 1, 0)
 
@@ -184,6 +189,34 @@ expect_close(
     1 if (r_g.derived.break_even_year is not None and r_g.derived.break_even_year <= 3) else 0,
     1,
     0,
+)
+
+# 15. 住宅租金税项扣除（2022/23 课税年度起）：min(当年实付租金, 上限 10 万) × 边际税率，年末入结余
+#    默认场景：年租 162,000 > 上限 → 每年扣除 = 100,000 × 17% = 17,000；
+#    买房方案自住年用 MDI，第 6-10 年租大房对称享受租金扣除（年租 216,000 → 同样封顶 17,000）
+f = (1 + 0.025 / 12) ** 12  # 定期 2.5% 名义年利率的年化复利因子
+r_rd_off = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, "rent_deduction_enabled": False}))
+expect_close(
+    "租金扣除 租房终值增量",
+    r_default.derived.final_rent - r_rd_off.derived.final_rent,
+    17_000 * sum(f**k for k in range(10)),  # 第 1..10 年年末入池，分别复利 9..0 年
+    2,
+)
+expect_close(
+    "租金扣除 买房终值增量（第6-10年租大房对称享受）",
+    r_default.derived.final_buy - r_rd_off.derived.final_buy,
+    17_000 * sum(f**k for k in range(5)),
+    2,
+)
+# 低租金场景（月租 5,000）：年租 60,000 < 上限 → 按实付计；第 1 年实付 11 个月（首月以"上期"预付）
+lo = {"rent1_monthly": 5_000, "rent2_monthly": 5_000, "rental_income_monthly_0": 5_000}
+r_lo_on = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, **lo}))
+r_lo_off = simulate(Inputs(**{**DEFAULT_INPUTS.__dict__, **lo, "rent_deduction_enabled": False}))
+expect_close(
+    "租金扣除 低租金按实付（首年11个月）",
+    r_lo_on.derived.final_rent - r_lo_off.derived.final_rent,
+    5_000 * 11 * 0.17 * f**9 + 5_000 * 12 * 0.17 * sum(f**k for k in range(9)),
+    2,
 )
 
 print()

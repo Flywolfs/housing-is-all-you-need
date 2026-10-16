@@ -30,6 +30,7 @@ from typing import Optional, List
 
 MONTHS_PER_YEAR = 12
 MDI_ANNUAL_CAP = 100_000  # 居所贷款利息扣除每年上限（$10 万）
+RENT_DEDUCTION_CAP = 100_000  # 住宅租金税项扣除每年上限（$10 万）
 MAX_YEARS = 30
 
 
@@ -152,8 +153,8 @@ class Inputs:
     price_growth_rates: List[float] = field(default_factory=lambda: [0.0] * MAX_YEARS)  # 楼价增长率 %/年
     sell_year: Optional[int] = None        # 第几年末出售（None = 不出售）
     sale_price_override: Optional[float] = None  # 手动出售价（None = 按曲线推算）
-    initial_cash: float = 2_000_000        # 手头现金（第 0 年）
-    cash_follow_upfront: bool = False      # 手头现金自动 = 期初总支出（纯粹对比：同一笔刚好够买房的钱，买 vs 租）
+    initial_cash: float = 2_000_000        # 手头现金（cash_follow_upfront=True 时被忽略）
+    cash_follow_upfront: bool = True       # 手头现金自动 = 期初总支出（纯粹对比：同一笔刚好够买房的钱，买 vs 租）
 
     # ---- 二、买房 · 交易成本（期初一次性） ----
     down_payment_pct: float = 30           # 首付比例 %
@@ -163,13 +164,13 @@ class Inputs:
     legal_fee_mortgage: float = 8_000      # 律师费（按揭）
     misc_fees: float = 3_000               # 政府注册杂费
     mip_override: Optional[float] = None   # 按保费覆盖（None = 自动按 HKMC 费率）
-    renovation: float = 150_000            # 装修 / 家电家具
+    renovation: float = 20_000             # 装修 / 家电家具
 
     # ---- 三、买房 · 按揭 ----
     loan_years: int = 30                   # 还款期（年）
-    mortgage_rates: List[float] = field(default_factory=lambda: [3.5] * MAX_YEARS)  # 按揭利率 %/年
-    cap_rate: float = 3.5                  # 封顶利率（展示用）
-    cash_rebate_pct: float = 0.8           # 现金回赠（占贷款额 %）
+    mortgage_rates: List[float] = field(default_factory=lambda: [3.0] * MAX_YEARS)  # 按揭利率 %/年
+    cap_rate: float = 3.0                  # 封顶利率（展示用）
+    cash_rebate_pct: float = 1.2           # 现金回赠（占贷款额 %）
     lock_in_years: int = 3                 # 罚息 / 回赠锁定期（年）
     prepay_penalty_pct: float = 1          # 提前还款罚息 %
     annual_prepayment: float = 0           # 每年年末提前还款额 $
@@ -201,6 +202,7 @@ class Inputs:
 
     # ---- 六、租房方案 ----
     rent_growth_rates: List[float] = field(default_factory=lambda: [0.0] * MAX_YEARS)  # 租金增长率 %/年
+    rent_deduction_enabled: bool = True    # 住宅租金税项扣除（2022/23 课税年度起，需打厘印租约；与 MDI 互斥——两方案平行世界各自适用）
     rent1_monthly: float = 13_500          # 小房租金（第 0 年值 $/月）
     rent2_monthly: float = 18_000          # 大房租金（第 N 年起首年值 $/月）
     deposit_months: float = 2              # 按金（月，期末退回计资产）
@@ -479,6 +481,10 @@ def simulate(inp: Inputs) -> SimResult:
             r_flow += income - inp.living_expense_monthly - rent_charge
             year_paid += rent_charge
         r_flow -= misc
+        # 住宅租金税项扣除（2022/23 起，需打厘印租约）：min(当年实付租金, 上限 10 万) × 边际税率，年末一次性入结余
+        # 注：第 1 年实付为 11 个月（首月以"上期"预付，属签约时点支出），按当年实付计扣除
+        if inp.rent_deduction_enabled and year_paid > 0:
+            r_flow += min(year_paid, RENT_DEDUCTION_CAP) * inp.mdi_marginal_rate_pct / 100
         rent_lump_at.append(r_lump)
         rent_flow_at.append(r_flow)
         rent_deposit_at.append(deposit)
@@ -608,6 +614,11 @@ def simulate(inp: Inputs) -> SimResult:
         # 居所贷款利息扣除（自住年份，年末一次性计入结余）
         if inp.mdi_enabled and self_occupied and year_interest > 0:
             b_flow += min(year_interest, MDI_ANNUAL_CAP) * inp.mdi_marginal_rate_pct / 100
+
+        # 住宅租金税项扣除：换大房/卖出转租期间自己租房的年份，与租房方案对称享受
+        # （自住年用 MDI、租房年用租金扣除，互斥由居住状态自然隔离）
+        if inp.rent_deduction_enabled and rent_tenant:
+            b_flow += min(rent_this_year * MONTHS_PER_YEAR, RENT_DEDUCTION_CAP) * inp.mdi_marginal_rate_pct / 100
 
         # 年末提前还款（从定期结余扣款）
         year_prepaid = 0.0

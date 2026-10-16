@@ -13,7 +13,7 @@ export const DEFAULT_INPUTS: Inputs = {
   sellYear: null,
   salePriceOverride: null,
   initialCash: 2_000_000,
-  cashFollowUpfront: false,
+  cashFollowUpfront: true, // 手头现金默认 = 期初总支出（纯粹对比口径）
 
   // 二、交易成本
   downPaymentPct: 30,
@@ -23,13 +23,13 @@ export const DEFAULT_INPUTS: Inputs = {
   legalFeeMortgage: 8_000,
   miscFees: 3_000,
   mipOverride: null,
-  renovation: 150_000,
+  renovation: 20_000,
 
   // 三、按揭
   loanYears: 30,
-  mortgageRates: zeros(MAX_YEARS).fill(3.5),
-  capRate: 3.5,
-  cashRebatePct: 0.8,
+  mortgageRates: zeros(MAX_YEARS).fill(3.0),
+  capRate: 3.0,
+  cashRebatePct: 1.2,
   lockInYears: 3,
   prepayPenaltyPct: 1,
   annualPrepayment: 0,
@@ -61,6 +61,7 @@ export const DEFAULT_INPUTS: Inputs = {
 
   // 六、租房方案
   rentGrowthRates: zeros(MAX_YEARS),
+  rentDeductionEnabled: true, // 住宅租金税项扣除（需打厘印租约，年上限 10 万）
   rent1Monthly: 13_500,
   rent2Monthly: 18_000,
   depositMonths: 2,

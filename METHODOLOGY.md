@@ -89,17 +89,17 @@ UI 分组与参数一一对应（`src/components/InputPanel.tsx`）。
 | | `property_price` | 5,000,000 | 第 0 年买入价 |
 | | `price_growth_rates` | 全 0 ×30 | 楼价年增长率列表（%） |
 | | `sell_year` / `sale_price_override` | None / None | 第 S 年末出售 / 手动出售价；S 超过 T 时引擎忽略并警告，UI 在缩短时长时联动回收 |
-| | `initial_cash` | 2,000,000 | 手头现金 |
+| | `initial_cash` / `cash_follow_upfront` | 2,000,000 / True | 手头现金 / True 时手头现金自动锁定为期初总支出（纯粹对比口径） |
 | 二 交易成本 | `down_payment_pct` | 30 | 首付比例（贷款成数 = 100−此值） |
 | | `agency_fee_pct` | 1 | 买楼佣金 |
 | | `stamp_duty_override` | None | 印花税覆盖（None=按税表） |
 | | `legal_fee_buy / legal_fee_mortgage / misc_fees` | 10,000/8,000/3,000 | 律师费、杂费 |
 | | `mip_override` | None | 按保费覆盖（None=按 HKMC 表） |
-| | `renovation` | 150,000 | 装修家电 |
+| | `renovation` | 20,000 | 装修家电 |
 | 三 按揭 | `loan_years` | 30 | 还款期 |
-| | `mortgage_rates` | 全 3.5 ×30 | 按揭利率列表（%/年，分段可变） |
-| | `cap_rate` | 3.5 | 封顶利率（仅展示） |
-| | `cash_rebate_pct` | 0.8 | 现金回赠（占贷款额 %） |
+| | `mortgage_rates` | 全 3.0 ×30 | 按揭利率列表（%/年，分段可变） |
+| | `cap_rate` | 3.0 | 封顶利率（仅展示） |
+| | `cash_rebate_pct` | 1.2 | 现金回赠（占贷款额 %） |
 | | `lock_in_years` / `prepay_penalty_pct` | 3 / 1 | 罚息锁定期 / 罚息率 |
 | | `annual_prepayment` | 0 | 每年年末提前还款额 |
 | | `prepayment_start_year` | 4 | 提前还款起始年（第 Y 年起年末还款；默认 = 默认罚息期结束后，避免误踩罚息） |
@@ -116,6 +116,7 @@ UI 分组与参数一一对应（`src/components/InputPanel.tsx`）。
 | | `let_agent_fee_months` / `lease_renewal_cycle_years` | 0.5 / 2 | 业主换约代理费 / 换约周期 |
 | | `rental_maintenance_annual` / `consent_to_lease_fee` | 2,000 / 1,000 | 出租维修、出租同意书费 |
 | 六 租房 | `rent_growth_rates` | 全 0 ×30 | 租金年增长率列表（同时驱动租金支出与出租收入） |
+| | `rent_deduction_enabled` | True | 住宅租金税项扣除（min(实付租金, 10 万) × 边际税率，年末入结余；买房方案租房居住年对称享受） |
 | | `rent1_monthly` / `rent2_monthly` | 13,500 / 18,000 | 小房租金 / 大房租金（N 年起首年值） |
 | | `deposit_months` / `prepaid_months` | 2 / 1 | 按金（可回收，计资产）/ 上期（=首月租金提前支付，覆盖第 1 个月租金，**非额外成本**） |
 | | `tenant_agent_fee_months` | 0.5 | 租客换约中介费 |
@@ -370,6 +371,17 @@ M-link 自动存款（mortgage_link_auto_deposit，默认开）：
 b_flow += min(当年利息总和, 100_000) × mdi_marginal_rate%
 ```
 
+**D8b 住宅租金税项扣除**（2022/23 课税年度起，需打厘印租约）——年末一次性：
+
+```
+租房方案：若 rent_deduction_enabled 且当年实付租金 > 0：
+r_flow += min(当年实付租金, 100_000) × mdi_marginal_rate%    # 第 1 年实付 11 个月（首月以"上期"预付）
+买房方案：若 rent_deduction_enabled 且 rent_tenant（换大房/卖出转租年）：
+b_flow += min(当年自付租金 × 12, 100_000) × mdi_marginal_rate%
+与 MDI 互斥（同一课税年度同一纳税人二选一），模型中由居住状态自然隔离：
+自住年 → MDI；租房居住年 → 租金扣除；两方案平行世界各自适用
+```
+
 **D9 年末提前还款**（从 `b_flow` 扣，不允许扣成负）：
 
 ```
@@ -494,14 +506,15 @@ Python 侧不变量测试逐行断言更多），关键锚点：
 | 不变量 A | 租金=0、全费用=0、零利率、全现金买房 → 每一年 `buyNW − rentNW = 0` |
 | 不变量 B | 上期=首月预付（prepaid=1）、零利率 → `buyNW − rentNW = 12,000×y`（总租金无重复计费） |
 | 按金不变量 | 零利率下 `deposit_months`=2 vs 0 → 每一年 `rentNW` 完全相等（换楼按金重置不改变净资产） |
-| 默认场景 | finalBuy≈4,905,860；finalRent≈5,811,897；期初支出 1,833,500；印花税 112,500 |
+| 默认场景 | finalBuy≈4,957,655；finalRent≈5,675,907；差额 −718,252；期初支出 1,745,500；印花税 112,500（默认：现金=期初总支出、利率 3.0%、回赠 1.2%、装修 2 万、租金扣除开） |
 | 按金对称 | 买房换房年（第 6 年）buyDeposit=36,000（2×18,000）、签约杂费 22,695（租客 14,540 + 业主 8,155）；卖出次年转租同理 |
 | 按保 | 80% 成数→保费 36,800（4M×0.92%）；90%→97,200（4.5M×2.16%）；非首置封顶 80% |
-| 回赠>1% | 350 万贷款 1.5% 回赠 → 回赠 52,500、贷款 3,447,500、期初 1,886,000 |
+| 回赠>1% | 350 万贷款 1.5% 回赠 → 回赠 52,500、贷款 3,447,500、期初 1,756,000 |
 | 高成数回赠基数 | 800 万楼九成按揭 1.3% → 回赠 72,800（=800万×70%×1.3%）、贷款 7,127,200（与经络按揭专栏逐分一致） |
-| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,095,873，第 5 年末 buySold=True |
-| 锁定期卖出 | 第 2 年卖出（lock_in=3）→ 杂费 = 28,000×2/3 + 基线年末余额×1%，贷款清零，有警告 |
-| 提前还款 | 年末提前还款 → 杂费 = amount×1% + 28,000×amount/基线年末余额，贷款减少 |
+| 卖出场景 | 第 5 年以 4M 卖出 → finalBuy≈4,114,609，第 5 年末 buySold=True |
+| 锁定期卖出 | 第 2 年卖出（lock_in=3）→ 杂费 = 42,000×2/3 + 基线年末余额×1%，贷款清零，有警告 |
+| 提前还款 | 年末提前还款 → 杂费 = amount×1% + 42,000×amount/基线年末余额，贷款减少 |
+| 租金税项扣除 | 默认场景：租房方案每年 17,000 入池（min(162,000, 100,000)×17%）；买房方案第 6-10 年租大房对称享受；关闭后 finalRent/finalBuy 即回退 |
 | 边界输入 | sell_year>years → 不崩溃、忽略出售、salePriceDefault=null、有警告 |
 | mip_override | 覆盖值 50,000 → mipPremium=50,000（实收终值，不缩放） |
 | 方向性 | 楼价年涨 10% → 买房赢且打平年 ≤3 |

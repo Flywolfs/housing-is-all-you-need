@@ -9,6 +9,7 @@ import { maxMipTerms, mipSinglePremium } from './hkmc.ts'
 
 const MONTHS_PER_YEAR = 12
 const MDI_ANNUAL_CAP = 100_000 // 居所贷款利息扣除每年上限
+const RENT_DEDUCTION_CAP = 100_000 // 住宅租金税项扣除每年上限
 
 /** 悬浮说明用的金额（保留 2 位小数便于核对月供等中间值） */
 function money(x: number): string {
@@ -237,6 +238,11 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
       yearPaid += rentCharge
     }
     rFlow -= misc
+    // 住宅租金税项扣除（2022/23 起，需打厘印租约）：min(当年实付租金, 上限 10 万) × 边际税率，年末一次性入结余
+    // 注：第 1 年实付为 11 个月（首月以"上期"预付，属签约时点支出），按当年实付计扣除
+    const rentDeduction =
+      inp.rentDeductionEnabled && yearPaid > 0 ? (Math.min(yearPaid, RENT_DEDUCTION_CAP) * inp.mdiMarginalRatePct) / 100 : 0
+    rFlow += rentDeduction
     rentLumpAt.push(rLump)
     rentFlowAt.push(rFlow)
     rentDepositAt.push(deposit)
@@ -284,12 +290,17 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
         `    收入 ${money(income * 12)}（月 ${money(income)} × 12）`,
         `    − 生活开支 ${money(inp.livingExpenseMonthly * 12)}（月 ${money(inp.livingExpenseMonthly)} × 12）`,
         `    − 租金 ${money(yearPaid)}（见"租金支出"列）`,
+        ...(rentDeduction > 0
+          ? [
+              `+ 租金税项扣除 ${money(rentDeduction)} = min(当年实付租金 ${money(yearPaid)}, 上限 ${money(RENT_DEDUCTION_CAP)}) × 边际税率 ${inp.mdiMarginalRatePct}%（年末一次性入账，需打厘印租约）`,
+            ]
+          : []),
         ...(misc > 0
           ? [
               `− 换约杂费 ${money(misc)} = 中介 ${money(miscAgent)} + 租约印花税 ${money(miscStamp)}${miscMoving > 0 ? ` + 搬迁 ${money(miscMoving)}` : ''}（年末扣，不在月度结余内）`,
             ]
           : []),
-        `= 年末 ${money(rFlow)}（年初 ${money(rfStart)} + 利息 ${money(rfInt)} + 月度结余 ${money(rentYearSurplus)}${misc > 0 ? ` − 杂费 ${money(misc)}` : ''}）`,
+        `= 年末 ${money(rFlow)}（年初 ${money(rfStart)} + 利息 ${money(rfInt)} + 月度结余 ${money(rentYearSurplus)}${rentDeduction > 0 ? ` + 租金扣除 ${money(rentDeduction)}` : ''}${misc > 0 ? ` − 杂费 ${money(misc)}` : ''}）`,
         `按金 ${money(deposit)}（资产，退租可回收）`,
         `合计净资产 = ${money(rLump)} + ${money(rFlow)} + ${money(deposit)} = ${money(rLump + rFlow + deposit)}`,
       ]
@@ -467,6 +478,14 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
       bFlow += mdiIn
     }
 
+    // 住宅租金税项扣除：换大房/卖出转租期间自己租房的年份，与租房方案对称享受
+    // （自住年用 MDI、租房年用租金扣除，互斥由居住状态自然隔离）
+    let rentDeductionIn = 0
+    if (inp.rentDeductionEnabled && rentTenant) {
+      rentDeductionIn = (Math.min(rentThisYear * MONTHS_PER_YEAR, RENT_DEDUCTION_CAP) * inp.mdiMarginalRatePct) / 100
+      bFlow += rentDeductionIn
+    }
+
     // 年末提前还款（从定期结余扣款）
     let yearPrepaid = 0
     let prepayCost = 0
@@ -612,6 +631,7 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
       `+ 利息 ${money(flowInt)}`,
       `+ 月度结余（净入定期）${money(yearSurplus - linkAutoIn)}`,
       ...(mdiIn > 0 ? [`+ 扣税返还 ${money(mdiIn)}`] : []),
+      ...(rentDeductionIn > 0 ? [`+ 租金扣除 ${money(rentDeductionIn)}`] : []),
       ...(prepayCost > 0 ? [`− 提前还款 ${money(prepayCost)}`] : []),
     ]
     const flowLines = [
@@ -639,6 +659,12 @@ export function simulate(inp: Inputs, opts?: { skipNotes?: boolean }): SimResult
         ? [
             `+ 利息扣税返还 ${money(mdiIn)} = min(当年按揭利息 ${money(yearInterest)}, 上限 ${money(MDI_ANNUAL_CAP)}) × 边际税率 ${inp.mdiMarginalRatePct}%`,
             `    （年末一次性入账，不包含在上面的月度结余内）`,
+          ]
+        : []),
+      ...(rentDeductionIn > 0
+        ? [
+            `+ 租金税项扣除 ${money(rentDeductionIn)} = min(当年实付租金 ${money(rentThisYear * MONTHS_PER_YEAR)}, 上限 ${money(RENT_DEDUCTION_CAP)}) × 边际税率 ${inp.mdiMarginalRatePct}%`,
+            `    （年末一次性入账，需打厘印租约；自住年用 MDI、租房年用租金扣除，互斥由居住状态隔离）`,
           ]
         : []),
       ...(prepayCost > 0

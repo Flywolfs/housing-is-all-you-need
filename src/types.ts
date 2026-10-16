@@ -56,6 +56,7 @@ export interface Inputs {
 
   // 六、租房方案
   rentGrowthRates: number[] // 租金增长率列表（%每年）
+  rentDeductionEnabled: boolean // 住宅租金税项扣除（2022/23 起，需打厘印租约；与 MDI 互斥——两方案平行世界各自适用）
   rent1Monthly: number // 小房租金（$/月，第 0 年值）
   rent2Monthly: number // 大房租金（$/月，第 N 年起的首年值）
   depositMonths: number // 按金（月，期末退回计资产）

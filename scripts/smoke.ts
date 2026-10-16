@@ -24,7 +24,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 
 // 2. 月供：$3.5M @3.5% 30年 ≈ $15,716.57
 {
-  const inp = { ...DEFAULT_INPUTS, priceGrowthRates: Array(10).fill(0), switchYear: 0, rentOutEnabled: false, mdiEnabled: false }
+  const inp = { ...DEFAULT_INPUTS, priceGrowthRates: Array(10).fill(0), switchYear: 0, rentOutEnabled: false, mdiEnabled: false, mortgageRates: Array(30).fill(3.5), cashRebatePct: 0.8 }
   const r = simulate(inp)
   expectClose('首年月供 3.5M@3.5%/30y', r.derived.monthlyPayment0, 15_716.57, 1)
 }
@@ -66,6 +66,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
     mdiEnabled: false,
     mortgageLinkEnabled: false,
     cashRebatePct: 0,
+    rentDeductionEnabled: false,
   }
   const rA = simulate(inp)
   for (const row of rA.rows) {
@@ -100,7 +101,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 {
   const r = simulate({ ...DEFAULT_INPUTS, sellYear: 5, salePriceOverride: 4_000_000 })
   expectTrue('卖出场景 第5年末已售', r.rows[4].buySold)
-  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_095_873, 2)
+  expectClose('卖出场景 finalBuy', r.derived.finalBuy, 4_114_608.6, 2)
   expectTrue('卖出后转租有按金', r.rows[5].buyDeposit === 36_000) // 卖出次年恰逢 N=6 → 租大房：2×18,000
   console.log('\n=== 第5年以$4M卖出（跌20%）===')
   console.log('final buy:', Math.round(r.derived.finalBuy), 'final rent:', Math.round(r.derived.finalRent))
@@ -117,11 +118,11 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
 // 6. 回赠 >1%（金管局规则 + 市场实务）：回赠按原贷款额计，整笔回赠从贷款额扣除，
 //    完成交易后整笔回赠以现金发放（模型视为第 0 月到账）
 // 贷款 350万 → 回赠 = 350万×1.5% = 52,500 → 实际批出贷款额 = 3,447,500
-// 期初 = 5,000,000 − 3,447,500 + 印花税112,500 + 佣金50,000 + 律师18,000 + 杂费3,000 + 装修150,000 = 1,886,000
+// 期初 = 5,000,000 − 3,447,500 + 印花税112,500 + 佣金50,000 + 律师18,000 + 杂费3,000 + 装修20,000 = 1,756,000
 {
   const r = simulate({ ...DEFAULT_INPUTS, cashRebatePct: 1.5 })
   expectTrue('回赠超标 贷款额已调低', Math.abs(r.derived.loanAmount - 3_447_500) < 1)
-  expectClose('回赠超标 期初总支出', r.derived.upfrontBuy, 1_886_000, 1)
+  expectClose('回赠超标 期初总支出', r.derived.upfrontBuy, 1_756_000, 1)
   expectClose('回赠超标 现金回赠全额', r.derived.rebateAmount, 52_500, 1)
 }
 
@@ -174,7 +175,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
   const pre = simulate({ ...DEFAULT_INPUTS, annualPrepayment: 500_000, prepaymentStartYear: 1 })
   expectTrue('提前还款 amount>0', pre.rows[0].buyPrepaid > 0)
   const amount = pre.rows[0].buyPrepaid
-  expectClose('提前还款 罚息+按比例追讨', pre.rows[0].buyMiscPaid, amount * 0.01 + 28_000 * (amount / base.rows[0].buyLoan), 1)
+  expectClose('提前还款 罚息+按比例追讨', pre.rows[0].buyMiscPaid, amount * 0.01 + 42_000 * (amount / base.rows[0].buyLoan), 1)
   expectTrue('提前还款 贷款减少', pre.rows[1].buyLoan < base.rows[1].buyLoan)
 
   // 10b. 起始年默认 4（罚息期后）：第 1-3 年不还款，第 4 年起无罚息
@@ -189,7 +190,7 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
   const base = simulate(DEFAULT_INPUTS)
   const s2 = simulate({ ...DEFAULT_INPUTS, sellYear: 2 })
   expectTrue('锁定期卖出 已售', s2.rows[1].buySold)
-  expectClose('锁定期卖出 追讨+罚息', s2.rows[1].buyMiscPaid, (28_000 * 2) / 3 + base.rows[1].buyLoan * 0.01, 1)
+  expectClose('锁定期卖出 追讨+罚息', s2.rows[1].buyMiscPaid, (42_000 * 2) / 3 + base.rows[1].buyLoan * 0.01, 1)
   expectClose('锁定期卖出 贷款清零', s2.rows[1].buyLoan, 0, 0.01)
   expectTrue('锁定期卖出 有警告', s2.warnings.some((w) => w.includes('罚息锁定期')))
 }
@@ -205,6 +206,34 @@ expectClose('SD 21,739,121', stampDutyResidential(21_739_121), Math.round(21_739
   const r = simulate({ ...DEFAULT_INPUTS, priceGrowthRates: Array(30).fill(10) })
   expectTrue('楼价年涨10% 买房赢', r.derived.finalDiff > 0)
   expectTrue('楼价年涨10% 打平年≤3', r.derived.breakEvenYear !== null && r.derived.breakEvenYear <= 3)
+}
+
+// 14. 住宅租金税项扣除（2022/23 起）：min(当年实付租金, 上限 10 万) × 边际税率，年末入结余
+{
+  const f = (1 + 0.025 / 12) ** 12
+  const off = simulate({ ...DEFAULT_INPUTS, rentDeductionEnabled: false })
+  expectClose(
+    '租金扣除 租房终值增量',
+    simulate(DEFAULT_INPUTS).derived.finalRent - off.derived.finalRent,
+    17_000 * [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].reduce((a, k) => a + f ** k, 0),
+    2,
+  )
+  expectClose(
+    '租金扣除 买房终值增量（第6-10年租大房对称享受）',
+    simulate(DEFAULT_INPUTS).derived.finalBuy - off.derived.finalBuy,
+    17_000 * [0, 1, 2, 3, 4].reduce((a, k) => a + f ** k, 0),
+    2,
+  )
+  // 低租金场景（月租 5,000）：年租 60,000 < 上限 → 按实付计；第 1 年实付 11 个月（首月上期预付）
+  const lo = { rent1Monthly: 5_000, rent2Monthly: 5_000, rentalIncomeMonthly0: 5_000 }
+  const loOn = simulate({ ...DEFAULT_INPUTS, ...lo })
+  const loOff = simulate({ ...DEFAULT_INPUTS, ...lo, rentDeductionEnabled: false })
+  expectClose(
+    '租金扣除 低租金按实付（首年11个月）',
+    loOn.derived.finalRent - loOff.derived.finalRent,
+    5_000 * 11 * 0.17 * f ** 9 + 5_000 * 12 * 0.17 * [0, 1, 2, 3, 4, 5, 6, 7, 8].reduce((a, k) => a + f ** k, 0),
+    2,
+  )
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 个失败`)

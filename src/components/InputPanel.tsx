@@ -230,13 +230,21 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
           <NumberField label="按金" value={inputs.depositMonths} suffix="月" step={1} onChange={(v) => set('depositMonths', v)} />
         </div>
         <div className="field-row">
-          <NumberField label="上期" value={inputs.prepaidMonths} suffix="月" step={1} onChange={(v) => set('prepaidMonths', v)} />
+          <ToggleField
+            label="住宅租金税项扣除"
+            value={inputs.rentDeductionEnabled}
+            hint="2022/23 课税年度起：每年实付租金与 10 万取低 × 边际税率，年末入结余；需打厘印租约。买房方案租大房年同样享受（与 MDI 互斥由居住状态隔离）"
+            onChange={(v) => set('rentDeductionEnabled', v)}
+          />
           <NumberField label="租客中介费" value={inputs.tenantAgentFeeMonths} suffix="月租/次" step={0.5}
             onChange={(v) => set('tenantAgentFeeMonths', v)} />
         </div>
         <div className="field-row">
+          <NumberField label="上期" value={inputs.prepaidMonths} suffix="月" step={1} onChange={(v) => set('prepaidMonths', v)} />
           <NumberField label="租客租约印花税" value={inputs.tenantStampDutyPctOfAnnual} suffix="% 年租/次" step={0.05}
             onChange={(v) => set('tenantStampDutyPctOfAnnual', v)} />
+        </div>
+        <div className="field-row">
           <MoneyField label="搬迁费" value={inputs.movingCostPerMove} suffix="/次" step={500} onChange={(v) => set('movingCostPerMove', v)} />
         </div>
       </Group>
@@ -268,10 +276,31 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
           <button type="button" className="btn" onClick={() => setInputsAll(DEFAULT_INPUTS, set)}>
             恢复默认值
           </button>
+          <button type="button" className="btn" onClick={() => exportParams(inputs)} title="导出当前全部参数，供 api.py / scan_estates.py 作为默认参数层（--params）">
+            导出参数 JSON
+          </button>
         </div>
       </Group>
     </div>
   )
+}
+
+function exportParams(inputs: Inputs) {
+  const payload = {
+    metadata: {
+      description: '买房 vs 租房 计算器参数（UI 导出，供 api.py --params / scan_estates.py --params 使用）',
+      exported_at: new Date().toISOString().slice(0, 10),
+      field_naming: 'camelCase（引擎 Inputs 原名）；api.py 自动转换为 snake_case',
+    },
+    params: inputs,
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'hk-housing-params.json'
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function setInputsAll(v: Inputs, set: Setter) {
