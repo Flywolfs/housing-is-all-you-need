@@ -276,7 +276,7 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
           <button type="button" className="btn" onClick={() => setInputsAll(DEFAULT_INPUTS, set)}>
             恢复默认值
           </button>
-          <button type="button" className="btn" onClick={() => exportParams(inputs)} title="导出当前全部参数，供 api.py / scan_estates.py 作为默认参数层（--params）">
+          <button type="button" className="btn" onClick={() => exportParams(inputs, derived)} title="导出当前全部参数，供 api.py / scan_estates.py 作为默认参数层（--params）">
             导出参数 JSON
           </button>
         </div>
@@ -285,14 +285,19 @@ export function InputPanel({ inputs, set, derived }: { inputs: Inputs; set: Sett
   )
 }
 
-function exportParams(inputs: Inputs) {
+function exportParams(inputs: Inputs, derived: Derived) {
   const payload = {
     metadata: {
       description: '买房 vs 租房 计算器参数（UI 导出，供 api.py --params / scan_estates.py --params 使用）',
       exported_at: new Date().toISOString().slice(0, 10),
       field_naming: 'camelCase（引擎 Inputs 原名）；api.py 自动转换为 snake_case',
     },
-    params: inputs,
+    params: {
+      ...inputs,
+      // "手头现金 = 期初总支出"开启时，initialCash 是惰性字段（引擎忽略它，实时用期初总支出）；
+      // 导出为当前实际生效值，避免读取参数文件时误读
+      initialCash: inputs.cashFollowUpfront ? Math.round(derived.upfrontBuy) : inputs.initialCash,
+    },
   }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
